@@ -8,6 +8,7 @@
  */
 #include "core/Application.h"
 #include "detection/GameDetectionService.h"
+#include "detection/WaylandWindowMonitor.h"
 #include "settings/SettingsManager.h"
 #include <QDir>
 #include <QFile>
@@ -30,6 +31,13 @@ protected:
     // paths (deliberately left null so a send would crash).
     app.m_settingsManager = std::make_unique<SettingsManager>(&app);
     app.m_gameDetector = std::make_unique<GameDetectionService>(&app);
+    // Model a real session: a window provider exists but has not reported a
+    // window for the game yet. Without one, the detector intentionally treats
+    // a live tracked process as "visible" (compositors with no window API),
+    // which is a different situation from a game that has not opened its
+    // window yet.
+    app.m_windowMonitor = std::make_unique<WaylandWindowMonitor>(&app);
+    app.m_gameDetector->setWindowMonitor(app.m_windowMonitor.get());
     app.m_pendingAutoRecordGame.clear();
     app.m_pendingDvrGame.clear();
     app.m_pendingWindowGame.clear();
@@ -61,7 +69,9 @@ protected:
     delete app.m_audioWaitTimer;
     app.m_audioWaitTimer = nullptr;
     app.m_settingsManager.reset();
+    app.m_gameDetector->setWindowMonitor(nullptr);
     app.m_gameDetector.reset();
+    app.m_windowMonitor.reset();
     app.m_pendingAutoRecordGame.clear();
     app.m_pendingDvrGame.clear();
     app.m_pendingWindowGame.clear();
