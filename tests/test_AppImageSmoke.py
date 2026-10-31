@@ -28,7 +28,6 @@ class AppImagePayloadTest(unittest.TestCase):
             "usr/bin/qt.conf",
             "usr/lib/libTrophy.so",
             "usr/lib/trophy/libtrophy_layer.so",
-            "usr/lib/trophy/libtrophy_gl_shim.so",
             "usr/plugins/platforms/libqwayland-generic.so",
             "usr/plugins/platforms/libqoffscreen.so",
             "usr/plugins/wayland-shell-integration/libxdg-shell.so",

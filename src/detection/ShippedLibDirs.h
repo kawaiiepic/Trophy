@@ -15,13 +15,13 @@
 namespace TrophyBackend {
 
 /**
- * @brief Locate the helper libraries we ship (Vulkan layer, GL shim).
+ * @brief Locate the helper libraries we ship (the Vulkan layer).
  *
  * Custom prefixes are the whole reason this exists. Both lookups used to
  * probe a hardcoded /usr/lib/trophy list, which never matched
  * `cmake --install --prefix ~/.local` (binaries in <prefix>/bin, libraries
  * in <prefix>/lib/trophy). Nothing failed loudly: the Vulkan layer simply
- * stopped registering and the GL shim could not enrol — and only once the
+ * stopped registering — and only once the
  * dev build tree was gone, since that used to shadow the lookup.
  *
  * Candidates are ordered by how much we trust them: relative to the

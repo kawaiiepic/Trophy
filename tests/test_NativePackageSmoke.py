@@ -31,7 +31,7 @@ class NativePackageSmokeTest(unittest.TestCase):
         self.libdir = libdir
         for relative in (
             "bin/trophy", f"{libdir}/libTrophy.so",
-            f"{libdir}/trophy/libtrophy_layer.so", f"{libdir}/trophy/libtrophy_gl_shim.so",
+            f"{libdir}/trophy/libtrophy_layer.so",
             "share/applications/io.github.stevenjwheeler.Trophy.desktop",
             "share/icons/hicolor/scalable/apps/trophy.svg",
             "share/trophy/kwin/trophy-monitor/metadata.json",
@@ -71,7 +71,7 @@ class NativePackageSmokeTest(unittest.TestCase):
     def companions(self):
         directory = self.prefix / "lib/trophy/reporters32"
         directory.mkdir(parents=True)
-        for name in ("libtrophy_layer.so", "libtrophy_gl_shim.so"):
+        for name in ("libtrophy_layer.so",):
             header = bytearray(20)
             header[:7] = b"\x7fELF\x01\x01\x01"
             header[16:20] = b"\x03\x00\x03\x00"
@@ -93,7 +93,7 @@ class NativePackageSmokeTest(unittest.TestCase):
     def test_mislabeled_i386_companion_is_rejected(self):
         self.payload()
         directory = self.companions()
-        (directory / "libtrophy_gl_shim.so").write_bytes(b"not an i386 shared object")
+        (directory / "libtrophy_layer.so").write_bytes(b"not an i386 shared object")
         with self.assertRaisesRegex(RuntimeError, "i386 ET_DYN"):
             self.check()
 
@@ -117,7 +117,7 @@ class NativePackageSmokeTest(unittest.TestCase):
 
     def test_unreadable_reporter(self):
         self.payload()
-        (self.prefix / "lib/trophy/libtrophy_gl_shim.so").chmod(0o000)
+        (self.prefix / "lib/trophy/libtrophy_layer.so").chmod(0o000)
         with self.assertRaisesRegex(RuntimeError, "permissions"):
             self.check()
 

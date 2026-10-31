@@ -1,11 +1,11 @@
 /*
  * Trophy - Unit Tests
  * ShippedLibDirs: prefix-relative helper-library lookup shared by the
- * Vulkan layer registration and the GL shim enrollment.
+ * Vulkan layer registration.
  *
  * Locks the core contract: entries are directories — findShippedLib appends
  * the library file name itself, so passing a full file path as a search
- * dir silently matches nothing (this exact mistake broke GL shim lookup
+ * dir silently matches nothing (this exact mistake broke helper lookup
  * in every build-tree run).
  */
 
