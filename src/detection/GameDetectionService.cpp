@@ -1,5 +1,6 @@
 #include "GameDetectionService.h"
 #include "DefaultAppCatalog.h"
+#include "DetectionPolicy.h"
 #include "GameWhitelist.h"
 #include "WaylandWindowMonitor.h"
 #include "WindowInfo.h"
@@ -213,24 +214,18 @@ bool GameDetectionService::coversOutput(const WindowInfo &w) {
 
 bool GameDetectionService::isConfidentGame(qint64 pid, const QString &gameName,
                                            uint steamAppId) {
-  // Instant detect: explicit user rule, Proton/Steam marker, or the
-  // executable living in a Steam library.
-  if (m_whitelist->isWhitelisted(gameName))
-    return true;
-  if (steamAppId > 0)
-    return true;
-  if (processLooksLikeSteamGame(pid))
-    return true;
-  // Otherwise the focused window for the PID decides. A windowed game in a
-  // small window is a real game too (many clicker/puzzle games never cover
-  // the output), so any sane window counts; fullscreen still qualifies when
-  // a backend cannot report geometry.
+  DetectionEvidence evidence;
+  evidence.reporter = true;
+  evidence.whitelisted = m_whitelist->isWhitelisted(gameName);
+  evidence.steam = steamAppId > 0 || processLooksLikeSteamGame(pid);
   if (m_monitor) {
     const WindowInfo w = m_monitor->windowForPid(pid);
-    if (!w.minimized && w.focused && (w.fullscreen || usableWindowGeometry(w)))
-      return true;
+    evidence.minimized = w.minimized;
+    evidence.focused = w.focused;
+    evidence.fullscreen = w.fullscreen;
+    evidence.usableWindow = usableWindowGeometry(w);
   }
-  return false;
+  return DetectionPolicy::decide(evidence) == DetectionDecision::Detect;
 }
 
 bool GameDetectionService::isBlacklistedIdentity(
@@ -406,9 +401,16 @@ void GameDetectionService::reconcileRunningGames() {
       continue; // same process already tracked under another spelling
     if (m_pidToRawKey.key(key, 0) != 0)
       continue; // already tracked
-    // Same bar as live detection: whitelist or Steam evidence only.
-    if (m_whitelist->isWhitelisted(name) || m_whitelist->isWhitelisted(key) ||
-        processLooksLikeSteamGame(w.pid)) {
+    // Same bar as live detection, expressed once by DetectionPolicy.
+    DetectionEvidence evidence;
+    evidence.whitelisted = m_whitelist->isWhitelisted(name) ||
+                           m_whitelist->isWhitelisted(key);
+    evidence.steam = sid > 0 || processLooksLikeSteamGame(w.pid);
+    evidence.focused = w.focused;
+    evidence.fullscreen = w.fullscreen;
+    evidence.minimized = w.minimized;
+    evidence.coversOutput = coversOutput(w);
+    if (DetectionPolicy::decide(evidence) == DetectionDecision::Detect) {
       qDebug() << "Reconciled already-running game:" << display
                << "(PID:" << w.pid << ")";
       trackGame(w.pid, display, key);
