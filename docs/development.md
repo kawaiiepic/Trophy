@@ -33,6 +33,17 @@ compositor API:
   desktop-agnostic launch/PID signal. `PipeWireStreamWatcher` snapshots those
   off the GUI thread and diffs them. Audio alone is not evidence: the process
   must also be a Steam title or match an explicit Games-page rule.
+- **Launcher ancestry** — `GameIdentity::launcherAncestry()` walks at most eight
+  parent processes looking for a games-only launcher or container (Steam,
+  reaper/pressure-vessel/Proton, Wine, gamescope, Lutris, Heroic, legendary,
+  Bottles, Minigalaxy, itch). A launcher in the ancestry is provenance: the
+  process was started by something that only starts games. This is a targeted
+  chain of `/proc/<pid>/stat` reads for one window's PID, never a scan.
+- **Desktop entries** — `GameIdentity::desktopEntryFor()` maps a compositor
+  app id / WM_CLASS to its installed `.desktop` file and accepts it only when
+  `Categories` contains `Game`. Players, browsers and other apps publish
+  non-Game categories, so fullscreen video stays out. Flatpak apps count only
+  through their exported desktop entry, not from the sandbox id alone.
 - **Window context** — `WaylandWindowMonitor` still supplies focus,
   fullscreen/coverage, geometry and the window picker. It is optional
   enrichment for detection, not the source of identity.
@@ -42,7 +53,10 @@ compositor API:
   compositors that do rather than a replacement for their window backends.
 
 The corresponding rule set is `DetectionPolicy`; new sources should feed it
-evidence instead of adding another ad-hoc confidence branch.
+evidence instead of adding another ad-hoc confidence branch. Provenance
+(reporter, launcher ancestry, game desktop entry) only counts once the window
+is focused and capturable — fullscreen, or at least 64x64 so windowed games
+count; without provenance a window is never game evidence on its own.
 
 ## Dependencies
 

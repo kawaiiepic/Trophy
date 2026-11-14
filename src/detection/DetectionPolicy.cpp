@@ -21,14 +21,14 @@ DetectionDecision DetectionPolicy::decide(const DetectionEvidence &evidence) {
   if (evidence.whitelisted || evidence.steam)
     return DetectionDecision::Detect;
 
-  // Without a reporter, a window is only context, never independent game
+  // Without provenance, a window is only context, never independent game
   // discovery: a focused fullscreen player is not a game.
-  if (!evidence.reporter)
+  if (!evidence.provenance())
     return DetectionDecision::Ignore;
 
-  // The reporter proves a process initialized a graphics stack; the window
-  // still has to look like a game surface (or the user has to whitelist).
-  // Windowed games count; fullscreen qualifies even without geometry.
+  // Provenance proves a plausible launch path; the window still has to look
+  // like a game surface (or the user has to whitelist). Windowed games
+  // count; fullscreen qualifies even without geometry.
   if (!evidence.minimized && evidence.focused &&
       (evidence.fullscreen || evidence.usableWindow))
     return DetectionDecision::Detect;

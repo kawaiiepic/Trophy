@@ -1113,6 +1113,112 @@ TEST_F(GameDetectionServiceTest, ReconcileFindsSteamEnvRunningGame) {
   EXPECT_EQ(service->currentGamePid(), pid);
 }
 
+// Writes an isolated XDG applications tree for the desktop-entry provider.
+class DesktopEntryFixture {
+public:
+  DesktopEntryFixture() {
+    valid = dataHome.isValid() && dataDirs.isValid();
+    savedHome = qgetenv("XDG_DATA_HOME");
+    savedDirs = qgetenv("XDG_DATA_DIRS");
+    qputenv("XDG_DATA_HOME", dataHome.path().toUtf8());
+    qputenv("XDG_DATA_DIRS", dataDirs.path().toUtf8());
+  }
+  ~DesktopEntryFixture() {
+    if (savedHome.isNull())
+      qunsetenv("XDG_DATA_HOME");
+    else
+      qputenv("XDG_DATA_HOME", savedHome);
+    if (savedDirs.isNull())
+      qunsetenv("XDG_DATA_DIRS");
+    else
+      qputenv("XDG_DATA_DIRS", savedDirs);
+  }
+  bool write(const QString &id, const QString &name, const QString &categories) {
+    const QString dir = dataHome.path() + "/applications";
+    if (!QDir().mkpath(dir))
+      return false;
+    QFile file(dir + "/" + id + ".desktop");
+    if (!file.open(QIODevice::WriteOnly))
+      return false;
+    file.write(QStringLiteral("[Desktop Entry]\nType=Application\nName=%1\n"
+                              "Categories=%2\n")
+                   .arg(name, categories)
+                   .toUtf8());
+    return true;
+  }
+  bool valid = false;
+
+private:
+  QTemporaryDir dataHome;
+  QTemporaryDir dataDirs;
+  QByteArray savedHome;
+  QByteArray savedDirs;
+};
+
+TEST_F(GameDetectionServiceTest, ReconcileDetectsDesktopGameEntryWithoutReporter) {
+  // Provenance without a reporter: a native game's .desktop entry declares
+  // Categories=Game, so no SteamAppId, whitelist or preload library is needed.
+  DesktopEntryFixture entries;
+  ASSERT_TRUE(entries.valid);
+  ASSERT_TRUE(entries.write("org.example.Chess", "Example Chess",
+                            "Game;BoardGame;"));
+
+  QProcess child;
+  child.start("sleep", {"30"});
+  ASSERT_TRUE(child.waitForStarted(5000));
+  const qint64 pid = child.processId();
+  ASSERT_TRUE(waitForChildExec(pid));
+
+  QSignalSpy spy(service.get(), &GameDetectionService::gameDetected);
+  WindowInfo w;
+  w.id = 5151;
+  w.appId = "org.example.Chess";
+  w.title = "Example Chess";
+  w.pid = pid;
+  w.focused = true;
+  w.fullscreen = true;
+  monitor.ingestSnapshot({w});
+  pump(300);
+
+  child.kill();
+  child.waitForFinished(5000);
+
+  ASSERT_EQ(spy.count(), 1);
+  EXPECT_EQ(service->currentGamePid(), pid);
+  EXPECT_EQ(service->currentGameName(), "org.example.Chess");
+}
+
+TEST_F(GameDetectionServiceTest, ReconcileIgnoresNonGameDesktopEntry) {
+  // Same shape, but a media player entry: a fullscreen window alone must
+  // never become a recording.
+  DesktopEntryFixture entries;
+  ASSERT_TRUE(entries.valid);
+  ASSERT_TRUE(entries.write("mpv", "mpv", "AudioVideo;Video;Player;"));
+
+  QProcess child;
+  child.start("sleep", {"30"});
+  ASSERT_TRUE(child.waitForStarted(5000));
+  const qint64 pid = child.processId();
+  ASSERT_TRUE(waitForChildExec(pid));
+
+  QSignalSpy spy(service.get(), &GameDetectionService::gameDetected);
+  WindowInfo w;
+  w.id = 5152;
+  w.appId = "mpv";
+  w.title = "mpv";
+  w.pid = pid;
+  w.focused = true;
+  w.fullscreen = true;
+  monitor.ingestSnapshot({w});
+  pump(300);
+
+  child.kill();
+  child.waitForFinished(5000);
+
+  EXPECT_EQ(spy.count(), 0);
+  EXPECT_TRUE(service->currentGameName().isEmpty());
+}
+
 TEST_F(GameDetectionServiceTest, SteamAppIdFromAppIdParses) {
   EXPECT_EQ(GameDetectionService::steamAppIdFromAppId("steam_app_1422450"),
             1422450u);

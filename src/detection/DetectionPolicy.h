@@ -21,16 +21,23 @@ struct DetectionEvidence {
   bool excluded = false;   // blacklist/veto applies to key or display name
   bool whitelisted = false; // explicit user rule matches
   bool steam = false;       // SteamAppId (wire/env) or a steamapps path
+  // Provenance: why this process is plausible game content at all. Each of
+  // these is independent evidence; none of them is a window property.
   bool reporter = false;    // a graphics reporter reported this PID
+  bool launcher = false;    // a known game launcher is in the process ancestry
+  bool desktopGame = false; // toplevel app id maps to a Categories=Game entry
   bool focused = false;     // window state for the PID (when known)
   bool fullscreen = false;  // compositor fullscreen flag
   bool usableWindow = false; // known geometry at least 64x64 (windowed games)
   bool minimized = false;
+
+  /** Any provenance signal at all (reporter, launcher, desktop entry). */
+  bool provenance() const { return reporter || launcher || desktopGame; }
 };
 
 enum class DetectionDecision {
   Ignore,   // not a game, or not enough evidence to even ask the user
-  Candidate, // reporter evidence only: wait for focus/fullscreen
+  Candidate, // provenance only: wait for focus/fullscreen
   Detect,   // confident enough to report/auto-capture
 };
 
@@ -40,12 +47,13 @@ enum class DetectionDecision {
  * Rules, in order:
  *  - veto always wins;
  *  - explicit whitelist or Steam identity detects immediately;
- *  - a reporter event detects once its window is focused and capturable:
- *    fullscreen, or a window of at least 64x64 (windowed games are games
- *    too), otherwise it waits as a candidate;
- *  - a window alone is never enough: non-reporter windows need whitelist
- *    or Steam evidence, which is what keeps fullscreen video players and
- *    browsers out of the detection path.
+ *  - provenance (reporter, launcher ancestry, game desktop entry) detects
+ *    once its window is focused and capturable: fullscreen, or a window of
+ *    at least 64x64 (windowed games are games too), otherwise it waits as
+ *    a candidate;
+ *  - a window alone is never enough: windows without provenance need
+ *    whitelist or Steam evidence, which is what keeps fullscreen video
+ *    players, browsers and other apps out of the detection path.
  */
 class DetectionPolicy {
 public:

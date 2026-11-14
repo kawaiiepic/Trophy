@@ -251,6 +251,55 @@ bool GameDetectionService::processLooksLikeSteamGame(qint64 pid) {
   return result;
 }
 
+GameIdentity::LaunchProvenance GameDetectionService::launcherProvenance(
+    qint64 pid) {
+  if (pid <= 0)
+    return {};
+  const qint64 now = m_uptimeClock.elapsed();
+  const auto hit = m_launcherCache.constFind(pid);
+  if (hit != m_launcherCache.constEnd() && now - hit->checkedAt < kCacheTtlMs)
+    return hit->provenance;
+  const GameIdentity::LaunchProvenance result =
+      GameIdentity::launcherAncestry(pid);
+  m_launcherCache.insert(pid, {result, now});
+  if (m_launcherCache.size() > kCacheCap) {
+    for (auto it = m_launcherCache.begin(); it != m_launcherCache.end();) {
+      if (now - it->checkedAt >= kCacheTtlMs)
+        it = m_launcherCache.erase(it);
+      else
+        ++it;
+    }
+    while (m_launcherCache.size() > kCacheCap)
+      m_launcherCache.erase(m_launcherCache.begin());
+  }
+  return result;
+}
+
+GameIdentity::DesktopEntryInfo GameDetectionService::desktopEntry(
+    const QString &appId) {
+  const QString key = appId.trimmed();
+  if (key.isEmpty())
+    return {};
+  const qint64 now = m_uptimeClock.elapsed();
+  const auto hit = m_desktopCache.constFind(key);
+  if (hit != m_desktopCache.constEnd() &&
+      now - hit->checkedAt < kDesktopCacheTtlMs)
+    return hit->info;
+  const GameIdentity::DesktopEntryInfo info = GameIdentity::desktopEntryFor(key);
+  m_desktopCache.insert(key, {info, now});
+  if (m_desktopCache.size() > kCacheCap) {
+    for (auto it = m_desktopCache.begin(); it != m_desktopCache.end();) {
+      if (now - it->checkedAt >= kDesktopCacheTtlMs)
+        it = m_desktopCache.erase(it);
+      else
+        ++it;
+    }
+    while (m_desktopCache.size() > kCacheCap)
+      m_desktopCache.erase(m_desktopCache.begin());
+  }
+  return info;
+}
+
 bool GameDetectionService::coversOutput(const WindowInfo &w) {
   if (w.width <= 0 || w.height <= 0 || w.outputWidth <= 0 ||
       w.outputHeight <= 0)
@@ -266,12 +315,14 @@ bool GameDetectionService::isConfidentGame(qint64 pid, const QString &gameName,
   evidence.reporter = true;
   evidence.whitelisted = m_whitelist->isWhitelisted(gameName);
   evidence.steam = steamAppId > 0 || processLooksLikeSteamGame(pid);
+  evidence.launcher = launcherProvenance(pid).launcher;
   if (m_monitor) {
     const WindowInfo w = m_monitor->windowForPid(pid);
     evidence.minimized = w.minimized;
     evidence.focused = w.focused;
     evidence.fullscreen = w.fullscreen;
     evidence.usableWindow = usableWindowGeometry(w);
+    evidence.desktopGame = !w.appId.isEmpty() && desktopEntry(w.appId).isGame;
   }
   return DetectionPolicy::decide(evidence) == DetectionDecision::Detect;
 }
@@ -454,10 +505,12 @@ void GameDetectionService::reconcileRunningGames() {
     evidence.whitelisted = m_whitelist->isWhitelisted(name) ||
                            m_whitelist->isWhitelisted(key);
     evidence.steam = sid > 0 || processLooksLikeSteamGame(w.pid);
+    evidence.launcher = launcherProvenance(w.pid).launcher;
+    evidence.desktopGame = !w.appId.isEmpty() && desktopEntry(w.appId).isGame;
     evidence.focused = w.focused;
     evidence.fullscreen = w.fullscreen;
     evidence.minimized = w.minimized;
-    evidence.coversOutput = coversOutput(w);
+    evidence.usableWindow = usableWindowGeometry(w);
     if (DetectionPolicy::decide(evidence) == DetectionDecision::Detect) {
       qDebug() << "Reconciled already-running game:" << display
                << "(PID:" << w.pid << ")";

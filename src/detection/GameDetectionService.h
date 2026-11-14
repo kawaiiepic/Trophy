@@ -243,6 +243,10 @@ private:
   bool isBlacklistedIdentity(const QString &rawKey,
                              const QString &displayName) const;
   bool processLooksLikeSteamGame(qint64 pid);
+  // Evidence providers (result + monotonic ms at check); cached because
+  // windowsChanged fires for every focus/title change and these read /proc.
+  GameIdentity::LaunchProvenance launcherProvenance(qint64 pid);
+  GameIdentity::DesktopEntryInfo desktopEntry(const QString &appId);
   void onAudioStreamAppeared(const AudioStreamInfo &stream);
 
   void trackGame(qint64 pid, const QString &gameName,
@@ -330,7 +334,22 @@ private:
   // pid -> (result, monotonic ms at check). Member-scoped so instances
   // (and tests) never share verdicts.
   QMap<qint64, QPair<bool, qint64>> m_steamCheckCache;
+  // Per-PID launcher ancestry and per-app-id desktop entries. Same member
+  // scoping and TTL rules as the Steam verdict cache above.
+  struct LauncherCacheEntry {
+    GameIdentity::LaunchProvenance provenance;
+    qint64 checkedAt = 0;
+  };
+  QMap<qint64, LauncherCacheEntry> m_launcherCache;
+  struct DesktopCacheEntry {
+    GameIdentity::DesktopEntryInfo info;
+    qint64 checkedAt = 0;
+  };
+  QMap<QString, DesktopCacheEntry> m_desktopCache;
   static constexpr qint64 kCacheTtlMs = 5000;
+  // Desktop entries change only on install/remove and a miss scans every
+  // applications directory, so negatives are cached longer than PIDs.
+  static constexpr qint64 kDesktopCacheTtlMs = 60000;
   static constexpr int kCacheCap = 256;
   QElapsedTimer m_uptimeClock;
 

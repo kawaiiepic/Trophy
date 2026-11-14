@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSet>
 
 #include <cstring>
 #include <unistd.h>
@@ -25,6 +26,86 @@ namespace {
 QString basenameOf(QString path) {
   path.replace('\\', '/');
   return path.section('/', -1);
+}
+
+// Field 4 of /proc/<pid>/stat (ppid). The comm field is parenthesised and may
+// contain spaces or parentheses, so split after the LAST ')' — never assume
+// fixed column offsets.
+qint64 parentPidOf(qint64 pid) {
+  QFile stat(QString("/proc/%1/stat").arg(pid));
+  if (!stat.open(QIODevice::ReadOnly))
+    return 0;
+  const QByteArray bytes = stat.read(8192);
+  const qsizetype close = bytes.lastIndexOf(')');
+  if (close < 0 || close + 2 >= bytes.size())
+    return 0;
+  const QList<QByteArray> fields = bytes.mid(close + 2).split(' ');
+  // The first field after ") " is the state; the next one is ppid.
+  if (fields.size() < 2)
+    return 0;
+  bool ok = false;
+  const qint64 ppid = fields.at(1).toLongLong(&ok);
+  return ok ? ppid : 0;
+}
+
+QString processNameOf(qint64 pid) {
+  // comm is always readable and survives deleted executables; the exe
+  // basename is the fallback for odd names.
+  QFile comm(QString("/proc/%1/comm").arg(pid));
+  if (comm.open(QIODevice::ReadOnly)) {
+    const QString name = QString::fromUtf8(comm.read(256)).trimmed();
+    if (!name.isEmpty())
+      return name;
+  }
+  return QFileInfo(QString("/proc/%1/exe").arg(pid)).fileName();
+}
+
+QStringList applicationDirectories() {
+  QStringList dirs;
+  const QByteArray dataHome = qgetenv("XDG_DATA_HOME");
+  const QString home = dataHome.isEmpty()
+                           ? QDir::homePath() + "/.local/share"
+                           : QString::fromLocal8Bit(dataHome);
+  dirs << home + "/applications";
+  QByteArray dataDirs = qgetenv("XDG_DATA_DIRS");
+  if (dataDirs.isEmpty())
+    dataDirs = "/usr/local/share:/usr/share";
+  for (const QByteArray &dir : dataDirs.split(':')) {
+    if (!dir.isEmpty())
+      dirs << QString::fromLocal8Bit(dir) + "/applications";
+  }
+  dirs.removeDuplicates();
+  return dirs;
+}
+
+void readDesktopEntry(const QString &path, GameIdentity::DesktopEntryInfo *info) {
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly))
+    return;
+  const QByteArray data = file.read(65537);
+  if (data.size() > 65536)
+    return;
+  info->found = true;
+  info->path = path;
+  bool inEntry = false;
+  for (const QByteArray &raw : data.split('\n')) {
+    const QByteArray line = raw.trimmed();
+    if (line.startsWith('[')) {
+      inEntry = line == "[Desktop Entry]";
+      continue;
+    }
+    if (!inEntry)
+      continue;
+    if (info->name.isEmpty() && line.startsWith("Name="))
+      info->name = QString::fromUtf8(line.mid(5)).trimmed();
+    else if (line.startsWith("Categories=")) {
+      for (const QString &category :
+           QString::fromUtf8(line.mid(11)).split(';', Qt::SkipEmptyParts)) {
+        if (category.trimmed() == QLatin1String("Game"))
+          info->isGame = true;
+      }
+    }
+  }
 }
 
 } // namespace
@@ -195,6 +276,73 @@ bool GameIdentity::looksLikeSteamGame(qint64 pid) {
   if (!cmd.open(QIODevice::ReadOnly))
     return false;
   return cmd.readAll().contains("steamapps");
+}
+
+bool GameIdentity::isLauncherName(const QString &name) {
+  static const QSet<QString> launchers{
+      "steam",   "steamwebhelper", "reaper",
+      "pressure-vessel", "pressure-vessel-wrap", "pvp",
+      "proton",  "wineserver", "wine",
+      "wine64",  "wine-preloader", "wine64-preloader",
+      "gamescope", "gamescopereaper",
+      "lutris",  "heroic",  "legendary",  "bottles",
+      "minigalaxy", "itch"};
+  return launchers.contains(basenameOf(name).toLower());
+}
+
+GameIdentity::LaunchProvenance GameIdentity::launcherAncestry(qint64 pid,
+                                                              int maxDepth) {
+  LaunchProvenance result;
+  if (pid <= 0 || maxDepth <= 0)
+    return result;
+  QSet<qint64> seen{pid};
+  qint64 current = pid;
+  for (int depth = 0; depth < maxDepth; ++depth) {
+    const qint64 parent = parentPidOf(current);
+    if (parent <= 1 || seen.contains(parent))
+      break;
+    seen.insert(parent);
+    const QString name = processNameOf(parent);
+    if (isLauncherName(name)) {
+      result.launcher = true;
+      result.launcherName = name.toLower();
+      return result;
+    }
+    current = parent;
+  }
+  return result;
+}
+
+GameIdentity::DesktopEntryInfo GameIdentity::desktopEntryFor(
+    const QString &appId) {
+  DesktopEntryInfo info;
+  QString id = appId.trimmed();
+  if (id.isEmpty())
+    return info;
+  if (id.endsWith(".desktop", Qt::CaseInsensitive))
+    id.chop(static_cast<qsizetype>(qstrlen(".desktop")));
+
+  const QStringList dirs = applicationDirectories();
+  for (const QString &dir : dirs) {
+    const QString path = dir + "/" + id + ".desktop";
+    if (QFileInfo::exists(path)) {
+      readDesktopEntry(path, &info);
+      return info;
+    }
+  }
+  // WM_CLASS is frequently lowercased or distribution-renamed, so fall back
+  // to a case-insensitive id match within each applications directory.
+  for (const QString &dir : dirs) {
+    const QFileInfoList entries =
+        QDir(dir).entryInfoList({"*.desktop"}, QDir::Files);
+    for (const QFileInfo &entry : entries) {
+      if (entry.completeBaseName().compare(id, Qt::CaseInsensitive) == 0) {
+        readDesktopEntry(entry.filePath(), &info);
+        return info;
+      }
+    }
+  }
+  return info;
 }
 
 } // namespace TrophyBackend

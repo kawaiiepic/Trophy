@@ -412,6 +412,13 @@ target_include_directories(test_DetectionPolicy PRIVATE ${TEST_INCLUDE_DIRS})
 target_link_libraries(test_DetectionPolicy PRIVATE ${TEST_LINK_LIBS})
 gtest_discover_tests(test_DetectionPolicy)
 
+add_executable(test_GameIdentity test_GameIdentity.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/GameIdentity.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/GameWhitelist.cpp)
+target_include_directories(test_GameIdentity PRIVATE ${TEST_INCLUDE_DIRS})
+target_link_libraries(test_GameIdentity PRIVATE ${TEST_LINK_LIBS})
+gtest_discover_tests(test_GameIdentity)
+
 add_executable(test_LegacyGlShimCleanup test_LegacyGlShimCleanup.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/LegacyGlShimCleanup.cpp)
 target_include_directories(test_LegacyGlShimCleanup PRIVATE ${TEST_INCLUDE_DIRS})

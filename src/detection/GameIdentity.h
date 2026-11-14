@@ -76,6 +76,47 @@ public:
 
   /** Helper/installer/crash-handler names that must never be games. */
   static bool isHelperName(const QString &name);
+
+  /** Game launcher/container process names (steam, lutris, wine, gamescope…). */
+  static bool isLauncherName(const QString &name);
+
+  /** How a process was launched, when a known launcher is in its ancestry. */
+  struct LaunchProvenance {
+    bool launcher = false;
+    QString launcherName;
+  };
+
+  /**
+   * @brief Bounded parent walk looking for a game launcher or container.
+   *
+   * Every game started through Steam, Lutris, Heroic, Bottles, itch or a
+   * Wine/Proton container has that launcher in its ancestry. This is
+   * provenance for an otherwise unknown process: it says "a games-only
+   * launcher started this", which is exactly the job the graphics reporters
+   * used to do without injecting a library.
+   *
+   * Targeted: reads only /proc/<pid>/stat and the comm/exe of that one
+   * process's ancestors, at most @p maxDepth levels, never a scan.
+   */
+  static LaunchProvenance launcherAncestry(qint64 pid, int maxDepth = 8);
+
+  /** Installed desktop entry for a compositor app id / WM_CLASS. */
+  struct DesktopEntryInfo {
+    bool found = false;
+    bool isGame = false;
+    QString name;
+    QString path;
+  };
+
+  /**
+   * @brief Resolve an app id to its installed .desktop entry.
+   *
+   * Native Linux games ship a desktop entry with Categories=Game, and
+   * compositors usually report the desktop file id as the window app id.
+   * Launchers and players publish non-Game categories, so a match is real
+   * provenance without guessing from window size or class names.
+   */
+  static DesktopEntryInfo desktopEntryFor(const QString &appId);
 };
 
 } // namespace TrophyBackend

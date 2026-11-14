@@ -91,3 +91,61 @@ TEST(DetectionPolicyTest, ReporterWithoutAnyWindowIsCandidate) {
   evidence.reporter = true;
   EXPECT_EQ(DetectionPolicy::decide(evidence), DetectionDecision::Candidate);
 }
+
+TEST(DetectionPolicyTest, LauncherProvenanceDetectsFullscreenGame) {
+  // Steam/Lutris/Heroic ancestry is provenance, exactly like a reporter:
+  // the launcher only starts games.
+  DetectionEvidence evidence;
+  evidence.launcher = true;
+  evidence.focused = true;
+  evidence.fullscreen = true;
+  EXPECT_EQ(DetectionPolicy::decide(evidence), DetectionDecision::Detect);
+}
+
+TEST(DetectionPolicyTest, LauncherProvenanceWindowedIsCandidate) {
+  DetectionEvidence evidence;
+  evidence.launcher = true;
+  evidence.focused = true;
+  EXPECT_EQ(DetectionPolicy::decide(evidence), DetectionDecision::Candidate);
+}
+
+TEST(DetectionPolicyTest, DesktopGameEntryDetectsFullscreenGame) {
+  DetectionEvidence evidence;
+  evidence.desktopGame = true;
+  evidence.focused = true;
+  evidence.fullscreen = true;
+  EXPECT_EQ(DetectionPolicy::decide(evidence), DetectionDecision::Detect);
+}
+
+TEST(DetectionPolicyTest, DesktopGameEntryWindowedDetects) {
+  DetectionEvidence evidence;
+  evidence.desktopGame = true;
+  evidence.focused = true;
+  evidence.usableWindow = true;
+  EXPECT_EQ(DetectionPolicy::decide(evidence), DetectionDecision::Detect);
+}
+
+TEST(DetectionPolicyTest, ProvenanceWithoutWindowIsCandidate) {
+  DetectionEvidence evidence;
+  evidence.launcher = true;
+  EXPECT_EQ(DetectionPolicy::decide(evidence), DetectionDecision::Candidate);
+}
+
+TEST(DetectionPolicyTest, MinimizedLauncherIsCandidate) {
+  DetectionEvidence evidence;
+  evidence.launcher = true;
+  evidence.focused = true;
+  evidence.fullscreen = true;
+  evidence.minimized = true;
+  EXPECT_EQ(DetectionPolicy::decide(evidence), DetectionDecision::Candidate);
+}
+
+TEST(DetectionPolicyTest, WindowWithNoProvenanceStaysIgnored) {
+  // Fullscreen video players, browsers and Electron apps: a window with
+  // gameplay geometry but no launcher/reporter/desktop-game evidence.
+  DetectionEvidence evidence;
+  evidence.focused = true;
+  evidence.fullscreen = true;
+  evidence.usableWindow = true;
+  EXPECT_EQ(DetectionPolicy::decide(evidence), DetectionDecision::Ignore);
+}
