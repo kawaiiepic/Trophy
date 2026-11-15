@@ -2171,6 +2171,12 @@ void Application::handleDiscoveryHintAction(const QString &action) {
           m_replayManager && !m_replayManager->isActive() &&
           !m_replayManager->isStarting();
       if ((record || dvr) && idle) {
+        // Same guidance as the authorize prompt: tell the user which window to
+        // pick in the portal dialog. It replaces the offer in place and is
+        // withdrawn by the existing capture-selection signals.
+        m_captureSelectionForRecording = record;
+        if (m_notificationService)
+          m_notificationService->showCaptureSelectionHint(game);
         authorizeGame(game);
         startWhenWindowReady(game, record);
       }
