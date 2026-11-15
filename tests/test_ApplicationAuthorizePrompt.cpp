@@ -151,6 +151,12 @@ protected:
   bool discoveryAppBlocked(const QString &appId) {
     return app.m_gameDetector->isBlocked(appId);
   }
+  bool discoveryAppWhitelisted(const QString &key) {
+    return app.m_gameDetector->whitelist().contains(key);
+  }
+  int discoveryWhitelistRows(const QString &key) {
+    return app.m_gameDetector->whitelist().count(key);
+  }
   bool discoveryHintCleared() const { return app.m_discoveryHintTitle.isEmpty(); }
   // The retry is deferred so the compositor can publish the replacement
   // window; pump events until the window wait is armed again.
@@ -401,7 +407,6 @@ TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintBlockVetoesTheApp) {
   setDiscoveryHint("mystery-app", "Mystery App");
   app.handleDiscoveryHintAction("block-app");
   EXPECT_TRUE(discoveryAppBlocked("mystery-app"));
-  EXPECT_TRUE(app.pendingAddGameQuery().isEmpty());
   EXPECT_TRUE(discoveryHintCleared());
 }
 
@@ -410,19 +415,19 @@ TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintDismissClearsTheOffer) {
   QSignalSpy pageSpy(&app, &Application::gamesPageRequested);
   app.handleDiscoveryHintAction("hint-dismissed");
   EXPECT_TRUE(discoveryHintCleared());
-  EXPECT_TRUE(app.pendingAddGameQuery().isEmpty());
   EXPECT_EQ(pageSpy.count(), 0);
 }
 
-TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintAddRequestsTheGamesPage) {
+TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintAddWhitelistsDirectly) {
+  // "Add to Games" is the confirmation: no second dialog, no prefilled
+  // search. The window key lands on the whitelist with its title as name.
   setDiscoveryHint("mystery-app", "Mystery App");
   QSignalSpy pageSpy(&app, &Application::gamesPageRequested);
   app.handleDiscoveryHintAction("add-game");
-  EXPECT_EQ(app.pendingAddGameQuery(), QString("Mystery App"));
+  EXPECT_TRUE(discoveryAppWhitelisted("mystery-app"));
+  EXPECT_EQ(discoveryWhitelistRows("mystery-app"), 1);
   EXPECT_EQ(pageSpy.count(), 1);
   EXPECT_TRUE(discoveryHintCleared());
-  app.clearPendingAddGameQuery();
-  EXPECT_TRUE(app.pendingAddGameQuery().isEmpty());
 }
 
 TEST_F(ApplicationAuthorizePromptTest, AuthorizePromptWaitGivesUpWithoutAWindow) {

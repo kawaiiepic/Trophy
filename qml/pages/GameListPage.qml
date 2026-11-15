@@ -181,8 +181,6 @@ Page {
 
         property var allWindows: []
         property string searchQuery: ""
-        // Discovery hint: prefilled by the Games page before open().
-        property string initialSearch: ""
         property var pickedWindow: null
         property string errorMessage: ""
         readonly property var shownWindows: allWindows.filter(function(w) {
@@ -223,8 +221,8 @@ Page {
         onOpened: {
             errorMessage = ""
             pickedWindow = null
-            searchQuery = initialSearch
-            processSearch.text = initialSearch
+            searchQuery = ""
+            processSearch.text = ""
             displayField.text = ""
             whitelistRadio.checked = true
             blacklistRadio.checked = false
@@ -762,23 +760,6 @@ Page {
             opacity: 0.15
         }
 
-    }
-
-    // Discovery hint: the notification's action asks for the Games page with
-    // the Add dialog already filtered to the window it named. Opening is
-    // triggered here (not from C++) because the dialog is page-local state.
-    Connections {
-        target: typeof app !== "undefined" ? app : null
-
-        function onPendingAddGameQueryChanged() {
-            if (typeof app === "undefined" || app === null)
-                return
-            if (!app.pendingAddGameQuery)
-                return
-            addGameDialog.initialSearch = app.pendingAddGameQuery
-            addGameDialog.open()
-            app.clearPendingAddGameQuery()
-        }
     }
 
 }

@@ -74,9 +74,6 @@ class Application : public QApplication {
   Q_PROPERTY(bool runWithoutTraySupported READ isRunWithoutTraySupported CONSTANT)
   Q_PROPERTY(bool useNativeDialogs READ useNativeDialogs NOTIFY useNativeDialogsChanged)
   Q_PROPERTY(bool suppressNextStorageNotification READ suppressNextStorageNotification WRITE setSuppressNextStorageNotification NOTIFY suppressNextStorageNotificationChanged)
-  // Discovery hint: the Games page picks this up, opens the Add Game dialog
-  // and clears it. Empty means "nothing to add".
-  Q_PROPERTY(QString pendingAddGameQuery READ pendingAddGameQuery NOTIFY pendingAddGameQueryChanged)
 
 public:
   explicit Application(int &argc, char **argv);
@@ -138,8 +135,6 @@ public:
   // file dialogs apply. Refuses while recording, like installUpdate().
   Q_INVOKABLE bool restartTrophy();
   Q_INVOKABLE void openUpdateDialog();
-  Q_INVOKABLE void clearPendingAddGameQuery();
-  QString pendingAddGameQuery() const { return m_pendingAddGameQuery; }
   // Notification actions for the discovery hint: "add-game" opens the Games
   // page with the dialog prefilled, "block-app" vetoes the app.
   void handleDiscoveryHintAction(const QString &action);
@@ -186,7 +181,6 @@ signals:
   void fatalError(const QString &message);
   void updateDialogRequested();
   void gamesPageRequested();
-  void pendingAddGameQueryChanged();
 
 private:
   void queryCaptureAvailability();
@@ -239,7 +233,6 @@ private:
   // Games page should prefill once the user accepts.
   QString m_discoveryHintAppId;
   QString m_discoveryHintTitle;
-  QString m_pendingAddGameQuery;
   // A lost capture asked for a fresh recording; instant replay must not take
   // the portal slot before that retry starts.
   bool m_recordingRearmPending = false;

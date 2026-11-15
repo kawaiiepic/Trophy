@@ -112,6 +112,15 @@ public:
   // Includes minimized windows: minimizing is not process exit. Windowed
   // games have no such window, so callers fall back to process liveness.
   QList<qint64> gameplayWindowPids(const QString &key) const;
+  /**
+   * @brief Detect games that were already running when Trophy started.
+   * Shims only report at graphics init, so a pre-existing game never
+   * sends START. Runs automatically on the first window snapshot after
+   * start(), and is public for explicit calls. Only focused (or fullscreen)
+   * windows with whitelist or Steam evidence are reported — same bar as
+   * live detection, never a guess.
+   */
+  void reconcileRunningGames();
 
   // Whitelist/Blacklist Management (invokable for the Games page;
   // true when the list actually changed, for UI feedback)
@@ -272,15 +281,6 @@ private:
   // gameClosed for clean capture teardown). Called by every path that
   // adds a veto; no-op unless the canonical key matches the tracked game.
   void retireBlockedGame(const QString &canonicalKey);
-  /**
-   * @brief Detect games that were already running when Trophy started.
-   * Shims only report at graphics init, so a pre-existing game never
-   * sends START. Runs automatically on the first window snapshot after
-   * start(), and is public for explicit calls. Only focused (or fullscreen)
-   * windows with whitelist or Steam evidence are reported — same bar as
-   * live detection, never a guess.
-   */
-  void reconcileRunningGames();
 
   /**
    * @brief Borderless-windowed heuristic: a window covering >= 90% of its

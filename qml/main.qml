@@ -710,8 +710,8 @@ ApplicationWindow {
                                 window.currentPage = 3
                                 infoPage.showUpdateDialog = true
                             }
-                            // Discovery hint: jump to Games; the page opens
-                            // its Add dialog from app.pendingAddGameQuery.
+                            // Discovery hint: the game was already added, so
+                            // just show the Games page with its new row.
                             function onGamesPageRequested() {
                                 if (playerPage.visible)
                                     playerPage.close()

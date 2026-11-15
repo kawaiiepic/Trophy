@@ -2113,13 +2113,6 @@ void Application::openUpdateDialog() {
   emit updateDialogRequested();
 }
 
-void Application::clearPendingAddGameQuery() {
-  if (m_pendingAddGameQuery.isEmpty())
-    return;
-  m_pendingAddGameQuery.clear();
-  emit pendingAddGameQueryChanged();
-}
-
 void Application::handleDiscoveryHintAction(const QString &action) {
   const QString appId = m_discoveryHintAppId;
   const QString title = m_discoveryHintTitle;
@@ -2141,11 +2134,16 @@ void Application::handleDiscoveryHintAction(const QString &action) {
       m_gameDetector->addToBlacklist(appId);
     return;
   }
-  const QString query = title.isEmpty() ? appId : title;
+  // Add: the notification itself is the confirmation, so record the window
+  // straight away (keyed by its compositor identity, named by its title) and
+  // treat it as a game now instead of asking the user to pick it again in the
+  // Add Game dialog.
+  if (m_gameDetector && !appId.isEmpty()) {
+    m_gameDetector->addToWhitelist(appId, title.isEmpty() ? appId : title);
+    m_gameDetector->reconcileRunningGames();
+  }
   showMainWindow();
   emit gamesPageRequested();
-  m_pendingAddGameQuery = query;
-  emit pendingAddGameQueryChanged();
 }
 
 QVariantMap Application::captureHealth() const {
