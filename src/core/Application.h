@@ -249,6 +249,16 @@ private:
   QString m_mainQmlPath; // Path for live-reload
   QString m_pendingAutoRecordGame;
   QString m_pendingDvrGame;
+  // A lost capture asked for a fresh recording; instant replay must not take
+  // the portal slot before that retry starts.
+  bool m_recordingRearmPending = false;
+  // The deferred "New Game" prompt for this identity is waiting for its
+  // window; used only to log the stall once instead of every re-check.
+  QString m_authorizePromptWaitingFor;
+  // The pending prompt exists because a saved restore token could not be
+  // honoured (the portal wanted its picker anyway), not because the game is
+  // new: word the notification accordingly.
+  bool m_authorizePromptTokenInvalid = false;
   bool m_captureSelectionForRecording = true;
   QTimer *m_detectionDebounceTimer = nullptr;
   // Window-gated capture: a portal restore references concrete windows, so

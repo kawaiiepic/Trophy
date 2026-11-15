@@ -37,12 +37,25 @@ protected:
     app.m_pendingCaptureKey.clear();
     app.m_windowWaitTimer = new QTimer(&app);
     app.m_audioWaitTimer = new QTimer(&app);
+    // The deferred-prompt re-check re-arms this timer, exactly as the
+    // initialized app's 3s debounce does.
+    app.m_detectionDebounceTimer = new QTimer(&app);
+    app.m_detectionDebounceTimer->setSingleShot(true);
+    app.m_detectionDebounceTimer->setInterval(3000);
     QObject::connect(app.m_gameDetector.get(), &GameDetectionService::currentGameChanged,
                      &app, &Application::resumePendingCapture);
     setCurrent("Brand New Game");
   }
 
   void TearDown() override {
+    // A deferred prompt re-arms the debounce timer; stop and drop it so a
+    // stale re-check cannot touch the next test's pending state.
+    if (app.m_detectionDebounceTimer) {
+      app.m_detectionDebounceTimer->stop();
+      delete app.m_detectionDebounceTimer;
+      app.m_detectionDebounceTimer = nullptr;
+    }
+    app.m_authorizePromptWaitingFor.clear();
     delete app.m_windowWaitTimer;
     app.m_windowWaitTimer = nullptr;
     delete app.m_audioWaitTimer;
@@ -97,6 +110,7 @@ protected:
   bool windowIsRecord() const { return app.m_pendingWindowIsRecord; }
   bool audioPendingEmpty() const { return app.m_pendingAudioGame.isEmpty(); }
   void fireDebounce() { app.onAuthorizeDebounceFired(); }
+  bool debounceActive() const { return app.m_detectionDebounceTimer->isActive(); }
   void fireWindowTimeout() { app.onWindowWaitTimeout(); }
   void authorize(const QString &game) { app.authorizeGame(game); }
   bool recordPendingEmpty() const {
@@ -163,6 +177,22 @@ TEST_F(ApplicationAuthorizePromptTest, DebounceRetainsEligibleWindowlessRequestU
   fireDebounce();
   EXPECT_FALSE(recordPendingEmpty());
   setToken("Windowless Game", "new-approval");
+  fireDebounce();
+  EXPECT_TRUE(recordPendingEmpty());
+}
+
+TEST_F(ApplicationAuthorizePromptTest, DeferredPromptReChecksWithoutACompositorPush) {
+  setCurrent("Launching Game");
+  armRecordPending("Launching Game");
+  fireDebounce();
+  // No window row in this fixture (no monitor): the request is retained and
+  // the debounce re-arms, so a compositor snapshot that never changes again
+  // cannot leave a first-run game unprompted forever.
+  EXPECT_FALSE(recordPendingEmpty());
+  EXPECT_TRUE(debounceActive());
+
+  // Approval still retires it on the next re-check.
+  setToken("Launching Game", "token-bytes");
   fireDebounce();
   EXPECT_TRUE(recordPendingEmpty());
 }

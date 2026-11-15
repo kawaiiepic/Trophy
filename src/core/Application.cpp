@@ -689,7 +689,14 @@ void Application::connectSignals() {
             // Resume the replay loop if the game is still running.
             m_replayManager->setPaused(false);
             const QString game = m_gameDetector ? m_gameDetector->currentGameName() : QString();
-            if (isCurrentCaptureGame(game) && !restoreTokenForGame(game).isEmpty()) {
+            if (m_recordingRearmPending) {
+              // A lost capture is about to start a fresh recording for the
+              // same game; arming the DVR now would take the portal slot and
+              // make that start time out.
+              qCDebug(appLog) << "Skipping DVR re-arm; recording re-arm pending for"
+                              << game;
+            } else if (isCurrentCaptureGame(game) &&
+                       !restoreTokenForGame(game).isEmpty()) {
               startWhenWindowReady(game, false);
             }
           });
@@ -842,6 +849,7 @@ void Application::connectSignals() {
             m_settingsManager->removeRestoreToken(game);
             m_settingsManager->removeRestoreToken(m_gameDetector->captureKeyForGame(game));
             m_pendingAutoRecordGame = game;
+            m_authorizePromptTokenInvalid = true;
             m_detectionDebounceTimer->start();
           });
   connect(m_replayManager.get(), &ReplayManager::restoreAuthNeeded, this, [this](const QString &game, const QString &identity) {
@@ -852,6 +860,7 @@ void Application::connectSignals() {
             m_settingsManager->removeRestoreToken(game);
             m_settingsManager->removeRestoreToken(m_gameDetector->captureKeyForGame(game));
             m_pendingDvrGame = game;
+            m_authorizePromptTokenInvalid = true;
             m_detectionDebounceTimer->start();
           });
   // Unblocking the live game re-arms its prompt: the debounce dropped it
@@ -888,6 +897,10 @@ void Application::connectSignals() {
             if (m_pendingDvrGame == gameName) {
               m_pendingDvrGame.clear();
             }
+            if (m_authorizePromptWaitingFor == gameName) {
+              m_authorizePromptWaitingFor.clear();
+            }
+            m_authorizePromptTokenInvalid = false;
             if (m_pendingWindowGame == gameName) {
               m_pendingWindowGame.clear();
               m_windowWaitTimer->stop();
@@ -1058,6 +1071,8 @@ void Application::connectSignals() {
             if (action != QStringLiteral("authorize") && action != QStringLiteral("block")) {
               m_pendingAutoRecordGame.clear();
               m_pendingDvrGame.clear();
+              m_authorizePromptWaitingFor.clear();
+              m_authorizePromptTokenInvalid = false;
               m_detectionDebounceTimer->stop();
               return;
             }
@@ -1082,8 +1097,9 @@ void Application::connectSignals() {
             }
             m_captureSelectionForRecording = isRecord;
             m_notificationService->showCaptureSelectionHint(game);
-            // Don't start capturing a transient window (mod loader / splash).
-            // Defer until a real game window appears.
+            // Defer until the game has a capturable window. Windowed games
+            // count; a launcher/splash surface that is later replaced is
+            // handled by the recording manager's hand-off retry.
             if (m_gameDetector && !m_gameDetector->hasVisibleWindow()) {
               qCInfo(appLog) << "Deferring capture for" << game
                              << "(no visible game window yet)";
@@ -1154,9 +1170,16 @@ void Application::connectSignals() {
                   m_recordingManager->currentGameName());
           });
   connect(m_recordingManager.get(), &RecordingManager::recordingStopped, this,
-          [this](const QString &filePath, qint64 durationMs, qint64 sizeBytes) {
+          [this](const QString &filePath, qint64 durationMs, qint64 sizeBytes,
+                 bool quiet) {
             m_recordingLibrary->refreshAnnotations(filePath);
             preparePlayerCaches(filePath);
+            // A clip filed because the capture source disappeared while the
+            // game was still running is pre-game/partial material: keep it in
+            // the library, but do not chime or announce it as a finished
+            // session.
+            if (quiet)
+              return;
             playRecordingStoppedPing(false);
             if (!m_settingsManager->notifyRecordings())
               return;
@@ -1441,7 +1464,9 @@ void Application::onWindowWaitTimeout() {
   // "New Game" prompt here is the phantom-prompt bug — drop it.
   if (!shouldShowAuthorizePrompt(game)) {
     qCInfo(appLog) << "No window appeared for" << game
-                   << "- dropping instead of prompting (blocked or approved)";
+                   << "- dropping instead of prompting (blocked or approved)"
+                   << (m_gameDetector ? m_gameDetector->describeTrackedGameWindows()
+                                      : QString());
     return;
   }
   qCDebug(appLog) << "No window appeared for" << game
@@ -1463,18 +1488,45 @@ void Application::onAuthorizeDebounceFired() {
   if (!shouldShowAuthorizePrompt(pending)) {
     qCInfo(appLog) << "Skipping authorize prompt for" << pending
                    << "(blocked or already approved)";
+    m_authorizePromptTokenInvalid = false;
     if (m_pendingAutoRecordGame == pending)
       m_pendingAutoRecordGame.clear();
     if (m_pendingDvrGame == pending)
       m_pendingDvrGame.clear();
     return;
   }
-  // Retain only an eligible request while waiting for a real game
-  // window. Approval, blocking, exit or replacement must retire it even
-  // when the compositor has not published a visible window yet.
-  if (m_gameDetector && !m_gameDetector->hasVisibleWindow()) {
+  // Retain only an eligible request while waiting for a game window.
+  // Approval, blocking, exit or replacement must retire it even when the
+  // compositor has not published a window yet. Any window for the tracked
+  // game is enough to ask the user: the prompt itself captures nothing, and
+  // the capture start below this decision still requires a sane
+  // (non-degenerate) window, windowed or not.
+  if (m_gameDetector && !m_gameDetector->hasGameWindow()) {
     qCDebug(appLog) << "Deferring authorize prompt for" << pending
-                    << "(no visible game window yet)";
+                    << "(no game window yet)"
+                    << m_gameDetector->describeTrackedGameWindows();
+    if (m_authorizePromptWaitingFor != pending) {
+      m_authorizePromptWaitingFor = pending;
+      qCInfo(appLog) << "Waiting for a game window before asking to authorize"
+                     << pending;
+    }
+    // A compositor snapshot can stay unchanged for a long time (loading
+    // game, static window list), so do not depend on another push to notice
+    // the game window. This re-check is a snapshot scan — no portal or
+    // PipeWire round-trip — and stops as soon as the pending is retired.
+    m_detectionDebounceTimer->start();
+    return;
+  }
+  m_authorizePromptWaitingFor.clear();
+  const bool tokenInvalid = std::exchange(m_authorizePromptTokenInvalid, false);
+  if (tokenInvalid) {
+    qCInfo(appLog) << "Showing authorize prompt for" << pending
+                   << "(saved authorization no longer valid)";
+    m_notificationService->showNotification(
+        "New Game: " + pending,
+        "Authorization is no longer valid — click to authorize Wayland "
+        "capture for this game again, or Block it.",
+        "trophy", 0, 2, true);
     return;
   }
   qCInfo(appLog) << "Showing authorize prompt for" << pending;
@@ -1545,17 +1597,24 @@ void Application::onCaptureStartLost(const QString &game,
   if (isGameBlocked(game) || restoreTokenForGame(game).isEmpty())
     return;
   qCInfo(appLog) << "Capture source for" << game
-                 << "closed before recording started - retrying on the next window";
+                 << "closed - retrying on the next window";
   // Let the compositor publish the replacement window before asking the
   // portal again; the retry is bounded in RecordingManager, so a game that
   // never produces a usable window still reports the error eventually.
+  // Claim priority over instant replay for the same window here too, in case
+  // it was armed between the loss and this retry.
+  m_recordingRearmPending = true;
   QTimer::singleShot(750, this, [this, game, identity]() {
+    m_recordingRearmPending = false;
     if (!m_gameDetector || m_gameDetector->currentGameName() != game)
       return;
     if (!identity.isEmpty() && m_gameDetector->currentGameKey() != identity)
       return;
     if (isGameBlocked(game) || restoreTokenForGame(game).isEmpty())
       return;
+    if (m_replayManager &&
+        (m_replayManager->isActive() || m_replayManager->isStarting()))
+      m_replayManager->stopDvr();
     startWhenWindowReady(game, true);
   });
 }
@@ -1575,7 +1634,8 @@ void Application::startWhenWindowReady(const QString &game, bool isRecord) {
   // would pop a picker for a game that is still launching. Wait for the
   // window; approved slow launches remain pending rather than prompting.
   qCDebug(appLog) << "Deferring capture for" << game
-                  << "until its window appears";
+                  << "until its window appears"
+                  << m_gameDetector->describeTrackedGameWindows();
   m_pendingWindowGame = game;
   m_pendingWindowIsRecord = isRecord;
   m_windowWaitTimer->start();

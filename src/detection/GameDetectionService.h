@@ -74,16 +74,40 @@ public:
   QStringList recentGames() const { return m_recentGames; }
 
   /**
-   * @brief Whether the compositor currently shows a window for the game.
+   * @brief Whether the compositor currently shows a capturable window for
+   * the game.
    *
    * Portal restore data references concrete windows (KDE matches by appId +
    * title), so firing a capture request before any game window exists
    * guarantees a picker even with a valid token. Application waits for
    * this before starting a token-armed capture.
+   *
+   * Windowed games count: any non-minimized window of the tracked identity
+   * at least 64x64 (or with unknown geometry) qualifies. Small clicker-style
+   * windows are legitimate capture targets, not only fullscreen/borderless
+   * surfaces. A launcher/splash surface that gets replaced is handled by the
+   * recording manager's hand-off retry instead of a size gate here.
    */
   Q_INVOKABLE bool hasVisibleWindow() const;
-  // Cached compositor evidence for a gameplay-sized window of this stable
-  // identity. Includes minimized windows: minimizing is not process exit.
+  /**
+   * @brief Whether any non-minimized compositor window exists for the game.
+   *
+   * Slightly weaker than hasVisibleWindow(): even a degenerate-sized window
+   * qualifies. Application uses this to decide when it is worth asking the
+   * user to authorize a new game; starting capture still requires a sane
+   * window (hasVisibleWindow). Falls back to false without a monitor or a
+   * tracked game.
+   */
+  bool hasGameWindow() const;
+  // One-line snapshot of the tracked identity's compositor rows (pid,
+  // geometry, fullscreen/minimized state, output coverage) for diagnosing
+  // why a window-gated decision deferred. Always descriptive, never empty.
+  QString describeTrackedGameWindows() const;
+  // Cached compositor evidence for a gameplay-sized (fullscreen or
+  // output-covering) window of this stable identity, used to pin the captured
+  // process and to keep a surviving launcher from faking a game exit.
+  // Includes minimized windows: minimizing is not process exit. Windowed
+  // games have no such window, so callers fall back to process liveness.
   QList<qint64> gameplayWindowPids(const QString &key) const;
 
   // Whitelist/Blacklist Management (invokable for the Games page;
@@ -200,7 +224,10 @@ private:
    * @brief Decide whether a shim event is confident enough to report.
    * Blacklist is checked by the caller. Instant detect on: whitelist
    * hit, SteamAppId present, or the exe living under a steamapps library.
-   * Otherwise the focused + fullscreen window for the PID decides.
+   * Otherwise the focused window for the PID decides: fullscreen, or any
+   * window of at least 64x64. Windowed games are games too — many
+   * clicker/puzzle titles never cover the output — so size is no longer a
+   * fullscreen requirement. Unknown (0x0) geometry needs the fullscreen flag.
    */
   bool isConfidentGame(qint64 pid, const QString &gameName, uint steamAppId);
   bool isBlacklistedIdentity(const QString &rawKey,
@@ -218,15 +245,17 @@ private:
    * @brief Detect games that were already running when Trophy started.
    * Shims only report at graphics init, so a pre-existing game never
    * sends START. Runs automatically on the first window snapshot after
-   * start(), and is public for explicit calls. Only focused/fullscreen
+   * start(), and is public for explicit calls. Only focused (or fullscreen)
    * windows with whitelist or Steam evidence are reported — same bar as
    * live detection, never a guess.
    */
   void reconcileRunningGames();
 
   /**
-   * @brief Borderless-windowed heuristic: a focused window covering most
-   * of its output counts like fullscreen (many games never set the flag).
+   * @brief Borderless-windowed heuristic: a window covering >= 90% of its
+   * output counts like fullscreen (many games never set the flag). Used to
+   * recognise gameplay-sized windows for PID pinning and exit classification,
+   * not to gate capture anymore.
    */
   static bool coversOutput(const WindowInfo &w);
 
@@ -268,7 +297,8 @@ private:
   QTimer *m_livenessTimer = nullptr;
   // Shim reporters that did not (yet) pass the confidence gate. Pruned
   // on STOP/disconnect; re-checked whenever window state changes so a
-  // game that starts windowed still detects when it goes fullscreen.
+  // windowless launch detects once its (windowed or fullscreen) window
+  // appears and takes focus.
   QMap<qint64, QString> m_pendingCandidates;
   // Reporter/window identity parallel to m_pendingCandidates. A Steam
   // resolved display name is not necessarily the key stored by the user.

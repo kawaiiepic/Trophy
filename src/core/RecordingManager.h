@@ -123,8 +123,13 @@ signals:
   // Terminal cleanup for every active recording, including failed output.
   // recordingStopped below is the successful-save notification only.
   void recordingFinished();
+  // quiet marks a clip filed because the capture source disappeared while the
+  // game was still visibly running (launcher/splash surface replaced, window
+  // recreated, permission revoked). The app keeps it in the library and
+  // re-arms capture, but stays silent — no completion chime or "saved"
+  // notification. A clip filed after a real game close is not quiet.
   void recordingStopped(const QString &filePath, qint64 durationMs,
-                        qint64 sizeBytes);
+                        qint64 sizeBytes, bool quiet);
   void recordingError(const QString &error);
   /**
    * The portal rejected our saved restore token. The app deletes it and
@@ -132,10 +137,10 @@ signals:
    */
   void restoreAuthNeeded(const QString &gameName, const QString &identity = {});
   /**
-   * The captured source vanished before anything was recorded — typically a
-   * launcher, boot or splash window that closed as the real game window
-   * appeared. The app waits for the next window and retries instead of
-   * showing an error for a recording that never started.
+   * The captured source vanished and the clip was filed: most often a
+   * launcher/splash surface replaced by the real game window, or a window
+   * recreated mid-session. The app waits for the next window and retries
+   * instead of showing an error.
    */
   void captureStartLost(const QString &gameName, const QString &identity = {});
   void progressUpdated(qint64 duration, qint64 fileSize);
@@ -174,11 +179,16 @@ private:
   void completePipelineAndStart();
   void finishStoppedRecording();
   void onCaptureError(const QString &error);
-  bool capturedGameHasEnded() const;
+  // Re-arming a source that was lost mid-recording. Deliberately separate
+  // from the pre-first-frame startup budget: that one resets when a
+  // recording starts, which would let a repeatedly-captured launcher window
+  // retry forever. Bounded per identity, released when a recording is filed.
+  bool takeCaptureLossRetry(const QString &identity);
   QString m_captureGameName;
   QString m_pendingCaptureError;
-  QElapsedTimer m_captureEndGrace;
-  int m_captureEndGraceMs = 5000;
+  int m_captureLossRetryCount = 0;
+  QString m_captureLossRetryKey;
+  qint64 m_captureLossRetrySinceMs = 0;
   // Silent retries for a source that died before the first frame. Bounded per
   // identity and window so a genuinely broken capture still reports an error.
   bool m_startupLossRetry = false;
