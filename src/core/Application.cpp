@@ -2113,6 +2113,16 @@ void Application::openUpdateDialog() {
   emit updateDialogRequested();
 }
 
+Application::DiscoveryCapture Application::discoveryCaptureMode() const {
+  if (!m_settingsManager)
+    return DiscoveryCapture::None;
+  if (m_settingsManager->autoRecordEnabled())
+    return DiscoveryCapture::Record;
+  if (m_settingsManager->instantReplayEnabled())
+    return DiscoveryCapture::Replay;
+  return DiscoveryCapture::None;
+}
+
 void Application::handleDiscoveryHintAction(const QString &action) {
   const QString appId = m_discoveryHintAppId;
   const QString title = m_discoveryHintTitle;
@@ -2137,13 +2147,35 @@ void Application::handleDiscoveryHintAction(const QString &action) {
   // Add: the notification itself is the confirmation, so record the window
   // straight away (keyed by its compositor identity, named by its title) and
   // treat it as a game now instead of asking the user to pick it again in the
-  // Add Game dialog.
+  // Add Game dialog. No navigation: the user stays where they are.
   if (m_gameDetector && !appId.isEmpty()) {
     m_gameDetector->addToWhitelist(appId, title.isEmpty() ? appId : title);
     m_gameDetector->reconcileRunningGames();
+    const QString game = m_gameDetector->currentGameName();
+    if (!game.isEmpty() && isCurrentCaptureGame(game)) {
+      // The click is the authorization decision: retire the prompt detection
+      // would have scheduled and request capture now, so the portal picker
+      // (the screenshare token) appears here instead of a second "New Game"
+      // notification three seconds later.
+      m_pendingAutoRecordGame.clear();
+      m_pendingDvrGame.clear();
+      if (m_detectionDebounceTimer)
+        m_detectionDebounceTimer->stop();
+      const DiscoveryCapture capture = discoveryCaptureMode();
+      const bool record = capture == DiscoveryCapture::Record;
+      const bool dvr = capture == DiscoveryCapture::Replay;
+      const bool idle =
+          m_recordingManager &&
+          m_recordingManager->state() ==
+              RecordingManager::RecordingState::Idle &&
+          m_replayManager && !m_replayManager->isActive() &&
+          !m_replayManager->isStarting();
+      if ((record || dvr) && idle) {
+        authorizeGame(game);
+        startWhenWindowReady(game, record);
+      }
+    }
   }
-  showMainWindow();
-  emit gamesPageRequested();
 }
 
 QVariantMap Application::captureHealth() const {

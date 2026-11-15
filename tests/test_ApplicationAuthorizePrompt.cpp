@@ -157,6 +157,14 @@ protected:
   int discoveryWhitelistRows(const QString &key) {
     return app.m_gameDetector->whitelist().count(key);
   }
+  // 0 = none, 1 = record, 2 = replay.
+  int discoveryCaptureMode() {
+    return static_cast<int>(app.discoveryCaptureMode());
+  }
+  void setRecordingSettings(bool autoRecord, bool instantReplay) {
+    app.m_settingsManager->setAutoRecordEnabled(autoRecord);
+    app.m_settingsManager->setInstantReplayEnabled(instantReplay);
+  }
   bool discoveryHintCleared() const { return app.m_discoveryHintTitle.isEmpty(); }
   // The retry is deferred so the compositor can publish the replacement
   // window; pump events until the window wait is armed again.
@@ -410,23 +418,28 @@ TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintBlockVetoesTheApp) {
   EXPECT_TRUE(discoveryHintCleared());
 }
 
+TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintCaptureFollowsRecordingSettings) {
+  setRecordingSettings(false, false);
+  EXPECT_EQ(discoveryCaptureMode(), 0);
+  setRecordingSettings(false, true);
+  EXPECT_EQ(discoveryCaptureMode(), 2);
+  setRecordingSettings(true, true);
+  EXPECT_EQ(discoveryCaptureMode(), 1);
+}
+
 TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintDismissClearsTheOffer) {
   setDiscoveryHint("mystery-app", "Mystery App");
-  QSignalSpy pageSpy(&app, &Application::gamesPageRequested);
   app.handleDiscoveryHintAction("hint-dismissed");
   EXPECT_TRUE(discoveryHintCleared());
-  EXPECT_EQ(pageSpy.count(), 0);
 }
 
 TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintAddWhitelistsDirectly) {
   // "Add to Games" is the confirmation: no second dialog, no prefilled
   // search. The window key lands on the whitelist with its title as name.
   setDiscoveryHint("mystery-app", "Mystery App");
-  QSignalSpy pageSpy(&app, &Application::gamesPageRequested);
   app.handleDiscoveryHintAction("add-game");
   EXPECT_TRUE(discoveryAppWhitelisted("mystery-app"));
   EXPECT_EQ(discoveryWhitelistRows("mystery-app"), 1);
-  EXPECT_EQ(pageSpy.count(), 1);
   EXPECT_TRUE(discoveryHintCleared());
 }
 

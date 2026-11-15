@@ -710,13 +710,6 @@ ApplicationWindow {
                                 window.currentPage = 3
                                 infoPage.showUpdateDialog = true
                             }
-                            // Discovery hint: the game was already added, so
-                            // just show the Games page with its new row.
-                            function onGamesPageRequested() {
-                                if (playerPage.visible)
-                                    playerPage.close()
-                                window.currentPage = 1
-                            }
                         }
                     }
 

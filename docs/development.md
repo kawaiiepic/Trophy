@@ -64,8 +64,10 @@ discovery — has *no* evidence and its app id has no installed desktop entry
 at all, `GameDetectionService::undiscoveredGameSeen` fires instead of
 silently ignoring it. Application shows a **"Suspected game"** notification
 naming the app: **Add to Games** records the window on the Games list
-directly (the notice is the confirmation; its title becomes the display name)
-and opens the Games page, **Block** adds the app to the Games page's Blocked
+directly (the notice is the confirmation; its title becomes the display name),
+leaves the UI alone, and — when auto-record or instant replay is enabled —
+requests capture immediately so the portal screenshare picker appears in
+place of a second "New Game" notification. **Block** adds the app to the Games page's Blocked
 pole so the offer never repeats, and a bare close is a dismissal. It is resident
 (no timeout) like the "New Game" prompt, so it cannot auto-hide while a game
 is fullscreen. It never starts a capture, is capped at three offers per

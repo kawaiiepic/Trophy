@@ -135,9 +135,13 @@ public:
   // file dialogs apply. Refuses while recording, like installUpdate().
   Q_INVOKABLE bool restartTrophy();
   Q_INVOKABLE void openUpdateDialog();
-  // Notification actions for the discovery hint: "add-game" opens the Games
-  // page with the dialog prefilled, "block-app" vetoes the app.
+  // Notification actions for the discovery hint: "add-game" records the
+  // window, authorizes capture and leaves the UI alone; "block-app" vetoes it.
   void handleDiscoveryHintAction(const QString &action);
+  // Capture to arm when the user accepts a suspected game: auto-record wins,
+  // then instant replay, otherwise none.
+  enum class DiscoveryCapture { None, Record, Replay };
+  DiscoveryCapture discoveryCaptureMode() const;
   Q_INVOKABLE QVariantMap captureHealth() const;
   // Track mute that follows the active pipeline (the dashboard meters).
   // The recording and the DVR own different mixers; muting only one
@@ -180,7 +184,6 @@ signals:
   void detectionStatusChanged();
   void fatalError(const QString &message);
   void updateDialogRequested();
-  void gamesPageRequested();
 
 private:
   void queryCaptureAvailability();
