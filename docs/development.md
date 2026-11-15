@@ -23,6 +23,9 @@ no Trophy script version is claimed.
 Detection is evidence-based and deliberately does not require any one
 compositor API:
 
+- **Steam identity** — `SteamAppId`/`SteamGameId` from the process environment,
+  or an executable/command line under a `steamapps` library. Strongest and
+  cheapest evidence, and what makes Steam/Proton work with no configuration.
 - **PipeWire playback streams** — every audio node carries
   `application.process.id` and `application.process.binary`, giving a
   desktop-agnostic launch/PID signal. `PipeWireStreamWatcher` snapshots those
@@ -63,17 +66,23 @@ When a focused window — windowed games included, size must not gate
 discovery — has *no* evidence and its app id has no installed desktop entry
 at all, `GameDetectionService::undiscoveredGameSeen` fires instead of
 silently ignoring it. Application shows a **"Suspected game"** notification
-naming the app: **Add to Games** records the window on the Games list
-directly (the notice is the confirmation; its title becomes the display name),
-leaves the UI alone, and — when auto-record or instant replay is enabled —
-requests capture immediately so the portal screenshare picker appears in
-place of a second "New Game" notification, with the usual
-"Select capture: <game>" guidance naming the window to pick. **Block** adds the app to the Games page's Blocked
-pole so the offer never repeats, and a bare close is a dismissal. It is resident
-(no timeout) like the "New Game" prompt, so it cannot auto-hide while a game
-is fullscreen. It never starts a capture, is capped at three offers per
-launch with a 20 s spacing floor, and skips anything detection already has
-evidence for.
+naming the app:
+
+- **Add to Games** records the window on the Games list directly (the notice
+  is the confirmation; its title becomes the display name) and leaves the UI
+  alone. When auto-record or instant replay is enabled it then authorizes and
+  starts capture immediately, so the portal screenshare picker appears in
+  place of a second "New Game" notification, with the usual "Select capture:
+  <game>" guidance naming the window to pick.
+- **Block** adds the app to the Games page's Blocked pole so the offer never
+  repeats.
+- A bare close is a dismissal.
+
+The notice itself never starts a capture; only Add does, and only within the
+user's recording settings. It is resident (no timeout) like the "New Game"
+prompt, so it cannot auto-hide while a game is fullscreen, is capped at three
+offers per launch with a 20 s spacing floor, and skips anything detection
+already has evidence for.
 
 ## Dependencies
 

@@ -88,7 +88,7 @@ lists the landing page and the three documentation URLs, not their section ancho
   to the first guide, because a static host cannot issue a server redirect.
 - Page order, titles and summaries live in `PAGES` in `build_docs.py`. Relative
   links between guides are rewritten to the generated pages; links that leave
-  `docs/` (`../packaging/`, `../reporters/`, `../README.md`) point at GitHub.
+  `docs/` (`../packaging/`, `../README.md`) point at GitHub.
   Keep the header and footer markup inside `build_docs.py` in step with
   `index.html` if the shared site chrome changes.
 - Keep the canonical, social URLs, JSON-LD, sitemap, robots sitemap URL, and `CNAME`

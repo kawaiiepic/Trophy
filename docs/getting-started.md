@@ -138,11 +138,11 @@ Manual recording is also available. When no game is tracked, the Record action o
 
 ## Game detection
 
-Trophy combines game identity with compositor window context. Detection is conservative: not every launcher, graphics API, or runtime is covered. Use the Games page to manage recognition and blocking rules.
+Trophy combines game identity with compositor window context. Detection is conservative: not every launcher or runtime is covered. Use the Games page to manage recognition and blocking rules.
 
-Trophy loads **no library into games**: Steam identity from the process environment/library, a recognised games-only launcher in the process ancestry, or an installed desktop entry with `Categories=Game` (and no communication/productivity category) is evidence, and the focused window then confirms it. Detection therefore cannot conflict with anti-cheat software.
+Trophy loads **no library into games**: Steam identity from the process environment/library, a recognised games-only launcher in the process ancestry, or an installed desktop entry with `Categories=Game` (and no communication/productivity category) is evidence, and the focused window then confirms it. Detection does not hook, preload, or otherwise load anything into the game.
 
-A non-Steam game with no such evidence is recognized when you add it to the Games page. When Trophy sees a window it cannot identify, it shows a **Suspected game** notice: add it to the Games page, or block it so it is never offered again. It never records it on its own.
+A game with no such evidence is recognized when you add it to the Games page, or accept the **Suspected game** offer for it. When Trophy sees a window it cannot identify it shows that notice once: **Add to Games** records it and (when automatic recording or instant replay is enabled) asks for capture permission straight away; **Block** makes sure it is never offered again. The notice alone never records anything.
 
 ### KDE Plasma / KWin window helper
 
