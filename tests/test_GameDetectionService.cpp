@@ -1295,7 +1295,9 @@ TEST_F(GameDetectionServiceTest, HintNotOfferedForKnownNonGameApp) {
   EXPECT_EQ(hintSpy.count(), 0);
 }
 
-TEST_F(GameDetectionServiceTest, HintRequiresFocusedFullscreenWindow) {
+TEST_F(GameDetectionServiceTest, HintOffersWindowedGamesToo) {
+  // Discovery must not be gated on size: clicker/small-window titles that
+  // no provider knows are exactly what the Games page offer is for.
   setHintSpacing(0);
   QProcess child;
   child.start("sleep", {"30"});
@@ -1316,15 +1318,26 @@ TEST_F(GameDetectionServiceTest, HintRequiresFocusedFullscreenWindow) {
   windowed.outputHeight = 1080;
   monitor.ingestSnapshot({windowed});
   pump(200);
-  EXPECT_EQ(hintSpy.count(), 0);
+  EXPECT_EQ(hintSpy.count(), 1);
 
+  // Unfocused windows are not being used, so they are not offered.
   WindowInfo unfocused = windowed;
   unfocused.id = 6104;
+  unfocused.appId = "mystery-background";
   unfocused.focused = false;
-  unfocused.fullscreen = true;
   monitor.ingestSnapshot({unfocused});
   pump(200);
-  EXPECT_EQ(hintSpy.count(), 0);
+  EXPECT_EQ(hintSpy.count(), 1);
+
+  // Tooltip/transient-sized surfaces are not games worth offering.
+  WindowInfo tiny = windowed;
+  tiny.id = 6105;
+  tiny.appId = "mystery-tooltip";
+  tiny.width = 40;
+  tiny.height = 30;
+  monitor.ingestSnapshot({tiny});
+  pump(200);
+  EXPECT_EQ(hintSpy.count(), 1);
 
   child.kill();
   child.waitForFinished(5000);

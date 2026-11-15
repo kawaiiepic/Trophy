@@ -41,9 +41,12 @@ compositor API:
   chain of `/proc/<pid>/stat` reads for one window's PID, never a scan.
 - **Desktop entries** — `GameIdentity::desktopEntryFor()` maps a compositor
   app id / WM_CLASS to its installed `.desktop` file and accepts it only when
-  `Categories` contains `Game`. Players, browsers and other apps publish
-  non-Game categories, so fullscreen video stays out. Flatpak apps count only
-  through their exported desktop entry, not from the sandbox id alone.
+  `Categories` contains `Game`. The app id may be the desktop id
+  (`mpv`), the desktop file name itself (`ai.opencode.desktop` →
+  `ai.opencode.desktop.desktop`), or a `StartupWMClass` declared by an entry.
+  Players, browsers and other apps publish non-Game categories, so fullscreen
+  video stays out. Flatpak apps count only through their exported desktop
+  entry, not from the sandbox id alone.
 - **Window context** — `WaylandWindowMonitor` still supplies focus,
   fullscreen/coverage, geometry and the window picker. It is optional
   enrichment for detection, not the source of identity.
@@ -58,14 +61,15 @@ evidence instead of adding another ad-hoc confidence branch. Provenance
 is focused and capturable — fullscreen, or at least 64x64 so windowed games
 count; without provenance a window is never game evidence on its own.
 
-When a focused fullscreen window has *no* evidence and its app id has no
-installed desktop entry at all, `GameDetectionService::undiscoveredGameSeen`
-fires instead of silently ignoring it. Application shows a **"Suspected game"**
-notification naming the app: **Add to Games** opens the Games page with the
-Add Game dialog prefilled, **Block** adds the app to the Games page's Blocked
-pole so the offer never repeats, and a bare close is a dismissal. It never
-starts a capture, is capped at three offers per launch with a 20 s spacing
-floor, and skips anything detection already has evidence for.
+When a focused window — windowed games included, size must not gate
+discovery — has *no* evidence and its app id has no installed desktop entry
+at all, `GameDetectionService::undiscoveredGameSeen` fires instead of
+silently ignoring it. Application shows a **"Suspected game"** notification
+naming the app: **Add to Games** opens the Games page with the Add Game
+dialog prefilled, **Block** adds the app to the Games page's Blocked pole so
+the offer never repeats, and a bare close is a dismissal. It never starts a
+capture, is capped at three offers per launch with a 20 s spacing floor, and
+skips anything detection already has evidence for.
 
 ## Dependencies
 

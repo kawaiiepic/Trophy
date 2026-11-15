@@ -106,6 +106,8 @@ public:
     bool isGame = false;
     QString name;
     QString path;
+    /** StartupWMClass, for app ids that differ from the desktop file id. */
+    QString startupWmClass;
   };
 
   /**

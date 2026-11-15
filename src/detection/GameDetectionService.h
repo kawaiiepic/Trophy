@@ -194,13 +194,14 @@ signals:
   void gameDetected(const QString &gameName, qint64 pid);
   void gameClosed(const QString &gameName);
   /**
-   * @brief A fullscreen window nobody has evidence for.
+   * @brief A focused window nobody has evidence for.
    *
-   * Discovery hint: the window looks like a game (focused, fullscreen or
-   * output-covering) but has no reporter/launcher/desktop-entry/Steam
-   * evidence, so detection stays out of it. Application offers to add it to
-   * the Games page — never starts a capture. Already rate limited here: one
-   * per window key per launch, a small launch total and a spacing floor.
+   * Discovery hint: the window is focused and not degenerate (windowed games
+   * count — size must not gate discovery, clicker-style titles are real
+   * games), but has no reporter/launcher/desktop-entry/Steam evidence, so
+   * detection stays out of it. Application offers to add it to the Games
+   * page — never starts a capture. Already rate limited here: one per window
+   * key per launch, a small launch total and a spacing floor.
    */
   void undiscoveredGameSeen(const QString &appId, const QString &title,
                             qint64 pid);
@@ -254,7 +255,7 @@ private:
   bool isBlacklistedIdentity(const QString &rawKey,
                              const QString &displayName) const;
   bool processLooksLikeSteamGame(qint64 pid);
-  // Discovery hint: a fullscreen window with no evidence at all. Never
+  // Discovery hint: a focused window with no evidence at all. Never
   // starts anything; rate limits live in the members below.
   void hintUndetectedGame();
   bool isUndetectedGameCandidate(const WindowInfo &w);

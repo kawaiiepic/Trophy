@@ -98,6 +98,8 @@ void readDesktopEntry(const QString &path, GameIdentity::DesktopEntryInfo *info)
       continue;
     if (info->name.isEmpty() && line.startsWith("Name="))
       info->name = QString::fromUtf8(line.mid(5)).trimmed();
+    else if (line.startsWith("StartupWMClass="))
+      info->startupWmClass = QString::fromUtf8(line.mid(15)).trimmed();
     else if (line.startsWith("Categories=")) {
       for (const QString &category :
            QString::fromUtf8(line.mid(11)).split(';', Qt::SkipEmptyParts)) {
@@ -316,29 +318,49 @@ GameIdentity::LaunchProvenance GameIdentity::launcherAncestry(qint64 pid,
 GameIdentity::DesktopEntryInfo GameIdentity::desktopEntryFor(
     const QString &appId) {
   DesktopEntryInfo info;
-  QString id = appId.trimmed();
-  if (id.isEmpty())
+  const QString trimmed = appId.trimmed();
+  if (trimmed.isEmpty())
     return info;
-  if (id.endsWith(".desktop", Qt::CaseInsensitive))
-    id.chop(static_cast<qsizetype>(qstrlen(".desktop")));
+  // Compositor app ids are either a desktop id ("mpv") or the desktop file
+  // name itself ("ai.opencode.desktop", whose file is
+  // ai.opencode.desktop.desktop). Try both readings, raw first.
+  QStringList ids{trimmed};
+  if (trimmed.endsWith(".desktop", Qt::CaseInsensitive)) {
+    QString stripped = trimmed;
+    stripped.chop(static_cast<qsizetype>(qstrlen(".desktop")));
+    if (!stripped.isEmpty() && !ids.contains(stripped))
+      ids.append(stripped);
+  }
 
   const QStringList dirs = applicationDirectories();
-  for (const QString &dir : dirs) {
-    const QString path = dir + "/" + id + ".desktop";
-    if (QFileInfo::exists(path)) {
-      readDesktopEntry(path, &info);
-      return info;
+  for (const QString &id : ids) {
+    for (const QString &dir : dirs) {
+      const QString path = dir + "/" + id + ".desktop";
+      if (QFileInfo::exists(path)) {
+        readDesktopEntry(path, &info);
+        return info;
+      }
     }
   }
-  // WM_CLASS is frequently lowercased or distribution-renamed, so fall back
-  // to a case-insensitive id match within each applications directory.
+  // WM_CLASS is frequently lowercased, distribution-renamed, or simply not
+  // the desktop id (Electron apps in particular). Fall back to a
+  // case-insensitive id / StartupWMClass match within each directory.
   for (const QString &dir : dirs) {
     const QFileInfoList entries =
         QDir(dir).entryInfoList({"*.desktop"}, QDir::Files);
     for (const QFileInfo &entry : entries) {
-      if (entry.completeBaseName().compare(id, Qt::CaseInsensitive) == 0) {
-        readDesktopEntry(entry.filePath(), &info);
-        return info;
+      DesktopEntryInfo candidate;
+      readDesktopEntry(entry.filePath(), &candidate);
+      if (!candidate.found)
+        continue;
+      for (const QString &id : ids) {
+        const bool idMatch =
+            entry.completeBaseName().compare(id, Qt::CaseInsensitive) == 0;
+        const bool classMatch =
+            !candidate.startupWmClass.isEmpty() &&
+            candidate.startupWmClass.compare(id, Qt::CaseInsensitive) == 0;
+        if (idMatch || classMatch)
+          return candidate;
       }
     }
   }

@@ -62,14 +62,17 @@ qint64 firstChildOf(qint64 parent, int timeoutMs = 3000) {
 }
 
 void writeDesktopEntry(const QString &directory, const QString &id,
-                       const QString &name, const QString &categories) {
+                       const QString &name, const QString &categories,
+                       const QString &startupWmClass = {}) {
   QDir().mkpath(directory);
   QFile file(directory + "/" + id + ".desktop");
   ASSERT_TRUE(file.open(QIODevice::WriteOnly));
-  file.write(QStringLiteral("[Desktop Entry]\nType=Application\nName=%1\n"
-                            "Categories=%2\n")
-                 .arg(name, categories)
-                 .toUtf8());
+  QString body = QStringLiteral("[Desktop Entry]\nType=Application\nName=%1\n"
+                                "Categories=%2\n")
+                     .arg(name, categories);
+  if (!startupWmClass.isEmpty())
+    body += QStringLiteral("StartupWMClass=%1\n").arg(startupWmClass);
+  file.write(body.toUtf8());
 }
 
 class GameIdentityTest : public ::testing::Test {
@@ -192,5 +195,25 @@ TEST_F(GameIdentityTest, PlayerAndBrowserEntriesAreNotProvenance) {
 TEST_F(GameIdentityTest, UnknownAppIdIsNotProvenance) {
   const auto info = GameIdentity::desktopEntryFor("com.example.Missing");
   EXPECT_FALSE(info.found);
+  EXPECT_FALSE(info.isGame);
+}
+
+TEST_F(GameIdentityTest, AppIdThatIsTheDesktopFileNameResolves) {
+  // Live 2026-11-15: ai.opencode.desktop's file is ai.opencode.desktop.desktop
+  // and Categories=Development. Stripping the suffix blindly missed it and
+  // the app was offered as a suspected game.
+  writeDesktopEntry(home1, "ai.opencode.desktop", "OpenCode", "Development;");
+  const auto info = GameIdentity::desktopEntryFor("ai.opencode.desktop");
+  ASSERT_TRUE(info.found);
+  EXPECT_FALSE(info.isGame);
+  EXPECT_EQ(info.name, QString("OpenCode"));
+}
+
+TEST_F(GameIdentityTest, StartupWmClassResolvesToItsDesktopEntry) {
+  // Electron-style app ids often differ from the desktop file id.
+  writeDesktopEntry(home1, "org.example.App", "Example", "Development;",
+                    "mystery-class");
+  const auto info = GameIdentity::desktopEntryFor("mystery-class");
+  ASSERT_TRUE(info.found);
   EXPECT_FALSE(info.isGame);
 }

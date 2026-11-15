@@ -458,11 +458,14 @@ void GameDetectionService::onMonitorWindowsChanged() {
 bool GameDetectionService::isUndetectedGameCandidate(const WindowInfo &w) {
   if (w.pid <= 0 || w.pid == QCoreApplication::applicationPid())
     return false;
-  // Strict on purpose: a windowed browser or chat app is common, a
-  // fullscreen one is a deliberate act. Borderless fullscreen counts.
+  // Windowed games are games: size must not gate discovery, or clicker and
+  // small-window titles that no provider knows would never be offered.
+  // Only degenerate surfaces (tooltip/transient-sized) are skipped, the same
+  // floor capture uses, and unknown geometry is accepted.
   if (w.minimized || !w.focused)
     return false;
-  if (!w.fullscreen && !coversOutput(w))
+  if (w.width > 0 && w.height > 0 &&
+      (w.width < kMinGameWindowWidth || w.height < kMinGameWindowHeight))
     return false;
   const QString name = w.appId.isEmpty() ? w.title : w.appId;
   if (name.isEmpty())
