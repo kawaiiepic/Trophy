@@ -5,7 +5,7 @@
 ## Detection helper versions
 
 Each detector owns an independent positive integer revision, displayed in
-Settings → Detection Helpers as **Version 1**, **Version 2**, etc. Bump only the
+Settings → Game Detection as **Version 1**, **Version 2**, etc. Bump only the
 affected helper when changing it:
 
 - KWin: `KPlugin.Version` in `resources/kwin/trophy-monitor/metadata.json`.

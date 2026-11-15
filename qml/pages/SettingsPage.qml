@@ -67,8 +67,6 @@ Page {
             card = discordCard;
         else if (sectionTitle === "Game Detection")
             card = detectionCard;
-        else if (sectionTitle === "Detection Helpers")
-            card = detectionHelpersCard;
         else if (sectionTitle === "System Tray")
             card = trayCard;
         else if (sectionTitle === "Keyboard Shortcuts")
@@ -1169,7 +1167,7 @@ Page {
                     id: detectionCard
                     sectionTitle: qsTr("Game Detection")
                     iconSource: "qrc:/icons/gamepad.svg"
-                    description: qsTr("Choose whether Trophy detects games and records sessions automatically.")
+                    description: qsTr("Choose whether Trophy detects games and records sessions automatically. The window helper supplies the window state detection relies on.")
 
                     SettingRow {
                         label: qsTr("Auto-detect Games")
@@ -1198,16 +1196,6 @@ Page {
                             }
                         }
                     }
-                }
-
-                SectionCard {
-                    id: detectionHelpersCard
-                    objectName: "detectionHelpersCard"
-                    sectionTitle: qsTr("Detection Helpers")
-                    iconSource: "qrc:/icons/puzzle.svg"
-                    description: qsTr("Window tracking status at a glance.")
-                    readonly property real statusWidth: windowHelperControls.badgeWidth
-                    readonly property real actionWidth: helperRepair.implicitWidth
 
                     SettingRow {
                         label: qsTr("Game Window Helper (required)")
