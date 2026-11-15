@@ -25,6 +25,22 @@
 
 namespace TrophyBackend {
 
+namespace {
+// Smallest window worth capturing. Clicker-style games legitimately run in
+// small windows, so size is no longer a fullscreen proxy — only degenerate
+// surfaces (tooltip-sized or unmapped remnants) are ignored.
+constexpr int kMinGameWindowWidth = 64;
+constexpr int kMinGameWindowHeight = 64;
+
+// Known geometry at or above the floor above. Unknown (0x0) geometry is
+// neither: callers decide whether a window they cannot measure still counts.
+bool usableWindowGeometry(const WindowInfo &w) {
+  if (w.width <= 0 || w.height <= 0)
+    return false;
+  return w.width >= kMinGameWindowWidth && w.height >= kMinGameWindowHeight;
+}
+} // namespace
+
 GameDetectionService::GameDetectionService(QObject *parent)
     : QObject(parent), m_whitelist(std::make_unique<GameWhitelist>()) {
   // Monotonic clock for the per-PID Steam-check TTL cache below.
@@ -249,11 +265,13 @@ bool GameDetectionService::isConfidentGame(qint64 pid, const QString &gameName,
     return true;
   if (processLooksLikeSteamGame(pid))
     return true;
-  // Otherwise the focused window for the PID decides: real fullscreen,
-  // or borderless covering the output.
+  // Otherwise the focused window for the PID decides. A windowed game in a
+  // small window is a real game too (many clicker/puzzle games never cover
+  // the output), so any sane window counts; fullscreen still qualifies when
+  // a backend cannot report geometry.
   if (m_monitor) {
     const WindowInfo w = m_monitor->windowForPid(pid);
-    if (!w.minimized && w.focused && (w.fullscreen || coversOutput(w)))
+    if (!w.minimized && w.focused && (w.fullscreen || usableWindowGeometry(w)))
       return true;
   }
   return false;
@@ -723,11 +741,23 @@ void GameDetectionService::onSocketDisconnected() {
 bool GameDetectionService::processExists(qint64 pid) {
   if (pid <= 0)
     return false;
-  if (::kill(static_cast<pid_t>(pid), 0) == 0)
+  if (::kill(static_cast<pid_t>(pid), 0) != 0 && errno != EPERM)
+    return false; // ESRCH (or anything else): the process is gone.
+  // kill(pid, 0) also succeeds for a zombie. A game that has exited but is
+  // not reaped yet (Steam/Proton teardown) is gone for every purpose here,
+  // and treating it as alive delayed the 2026-11-14 close classification
+  // past the real exit. One targeted /proc/<pid>/stat read — never a scan.
+  QFile stat(QStringLiteral("/proc/%1/stat").arg(pid));
+  if (!stat.open(QIODevice::ReadOnly))
+    return true; // Cannot inspect it: keep the conservative answer.
+  const QByteArray fields = stat.read(512);
+  qsizetype stateAt = fields.lastIndexOf(')') + 1;
+  while (stateAt < fields.size() && fields.at(stateAt) == ' ')
+    ++stateAt;
+  if (stateAt >= fields.size())
     return true;
-  // EPERM: process exists but is not signalable. Anything else
-  // (ESRCH) means it is gone.
-  return errno == EPERM;
+  const char state = fields.at(stateAt);
+  return state != 'Z' && state != 'X' && state != 'x';
 }
 
 qint64 GameDetectionService::lowestLiveTrackedPid() const {
@@ -913,26 +943,71 @@ bool GameDetectionService::hasVisibleWindow() const {
   for (const WindowInfo &w : m_monitor->windows()) {
     if (w.pid <= 0 || w.minimized)
       continue;
-    // Transient windows (mod loaders, splash screens, launcher dialogs) are
-    // usually either small or not fullscreen.  A real game window is
-    // fullscreen or borderless (covering >= 90% of the output).  Ignore
-    // non-fullscreen windows that don't cover the output so that
-    // auto-recording and restore-token capture wait for the actual game
-    // window instead of binding to a temporary surface that disappears.
-    if (!w.fullscreen && !coversOutput(w)) {
-      // Fall back to a size heuristic when output geometry is unknown.
-      if (w.outputWidth <= 0 || w.outputHeight <= 0) {
-        if (w.width < 640 || w.height < 480)
-          continue;
-      } else {
-        continue;
-      }
-    }
+    // Any window the portal can capture counts. Windowed games (including
+    // small clicker-style windows) are as valid a capture target as
+    // fullscreen ones, so size is only used to ignore degenerate surfaces.
+    // Unknown geometry is accepted: the window exists even when the backend
+    // could not measure it, and the portal captures the compositor's window,
+    // not our geometry.
+    if (w.width > 0 && w.height > 0 &&
+        (w.width < kMinGameWindowWidth || w.height < kMinGameWindowHeight))
+      continue;
     const auto it = m_pidToGameName.find(w.pid);
     if (it != m_pidToGameName.end() && it.value() == m_currentGameName)
       return true;
   }
   return false;
+}
+
+bool GameDetectionService::hasGameWindow() const {
+  if (!m_monitor || m_currentGameName.isEmpty())
+    return false;
+  for (const WindowInfo &w : m_monitor->windows()) {
+    if (w.pid <= 0 || w.minimized)
+      continue;
+    const auto it = m_pidToGameName.find(w.pid);
+    if (it != m_pidToGameName.end() && it.value() == m_currentGameName)
+      return true;
+  }
+  return false;
+}
+
+QString GameDetectionService::describeTrackedGameWindows() const {
+  if (!m_monitor)
+    return QStringLiteral("no window monitor");
+  if (m_currentGameName.isEmpty())
+    return QStringLiteral("no tracked game");
+  QStringList rows;
+  for (const WindowInfo &w : m_monitor->windows()) {
+    const auto it = m_pidToGameName.find(w.pid);
+    if (it == m_pidToGameName.end() || it.value() != m_currentGameName)
+      continue;
+    QString coverage = QStringLiteral("?");
+    if (w.outputWidth > 0 && w.outputHeight > 0) {
+      coverage = QString::number(double(w.width) * double(w.height) /
+                                    (double(w.outputWidth) * double(w.outputHeight)),
+                                'f', 2);
+    }
+    rows << QStringLiteral("pid=%1 size=%2x%3 output=%4x%5 cover=%6 "
+                           "fullscreen=%7 minimized=%8 focused=%9")
+                .arg(w.pid)
+                .arg(w.width)
+                .arg(w.height)
+                .arg(w.outputWidth)
+                .arg(w.outputHeight)
+                .arg(coverage)
+                .arg(w.fullscreen ? QStringLiteral("true")
+                                  : QStringLiteral("false"))
+                .arg(w.minimized ? QStringLiteral("true")
+                                 : QStringLiteral("false"))
+                .arg(w.focused ? QStringLiteral("true")
+                               : QStringLiteral("false"));
+  }
+  if (rows.isEmpty())
+    return QStringLiteral("no compositor rows for \"%1\" (pid %2)")
+        .arg(m_currentGameName)
+        .arg(m_currentGamePid);
+  return rows.join(QStringLiteral("; "));
 }
 
 void GameDetectionService::updateCurrentGame(const QString &gameName,

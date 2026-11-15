@@ -228,6 +228,12 @@ protected:
   static bool watchdogActive(const WaylandPortalCapture &capture) {
     return capture.m_startWatchdog.isActive();
   }
+  static bool restoreWatchdogActive(const WaylandPortalCapture &capture) {
+    return capture.m_restoreWatchdog.isActive();
+  }
+  static void restoreTimeout(WaylandPortalCapture &capture) {
+    capture.onRestoreWatchdogTimeout();
+  }
   static void deliverMetadata(WaylandPortalCapture &capture, quint64 request = 0) {
     capture.applySourceMetadata("Old Game", 1234, true, request);
   }
@@ -692,6 +698,64 @@ TEST_F(WaylandPortalCaptureTest, SelectMethodErrorStopsWatchdogAndAllowsRetry) {
   control("Configure", {""});
   capture.requestScreenShare();
   ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty(); }));
+}
+
+TEST_F(WaylandPortalCaptureTest, SilentRestoreExpectationArmsOnlyWithSavedToken) {
+  if (!startFake()) GTEST_SKIP() << "requires private dbus-run-session bus";
+  {
+    // First-ever authorization: no token, so a slow portal picker is the
+    // user's own action and must not be mistaken for an invalid token.
+    WaylandPortalCapture capture;
+    capture.requestScreenShare();
+    ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty(); }));
+    const QString create = pendingPath(capture);
+    control("Respond", {create, 0u, QVariantMap{{"session_handle", "/test/session"}}});
+    ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty() && pendingPath(capture) != create; }));
+    EXPECT_FALSE(restoreWatchdogActive(capture));
+    capture.stopCapture();
+  }
+  {
+    WaylandPortalCapture capture;
+    restore(capture);
+    QSignalSpy stale(&capture, &IVideoCaptureSource::restoreTokenStale);
+    capture.requestScreenShare();
+    ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty(); }));
+    const QString create = pendingPath(capture);
+    control("Respond", {create, 0u, QVariantMap{{"session_handle", "/test/session"}}});
+    ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty() && pendingPath(capture) != create; }));
+    EXPECT_TRUE(restoreWatchdogActive(capture));
+    // A completed restore stops waiting.
+    control("Respond", {pendingPath(capture), 0u,
+                        QVariantMap{{"restore_token", "fresh-token"}}});
+    ASSERT_TRUE(waitUntil([&] { return !restoreWatchdogActive(capture); }));
+    EXPECT_EQ(stale.count(), 0);
+    capture.stopCapture();
+  }
+}
+
+TEST_F(WaylandPortalCaptureTest, UnhonouredRestoreTokenAbandonsThePickerForReauthorization) {
+  if (!startFake()) GTEST_SKIP() << "requires private dbus-run-session bus";
+  WaylandPortalCapture capture;
+  restore(capture);
+  QSignalSpy stale(&capture, &IVideoCaptureSource::restoreTokenStale);
+  QSignalSpy errors(&capture, &IVideoCaptureSource::captureError);
+  capture.requestScreenShare();
+  ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty(); }));
+  const QString create = pendingPath(capture);
+  control("Respond", {create, 0u, QVariantMap{{"session_handle", "/test/session"}}});
+  ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty() && pendingPath(capture) != create; }));
+  // The portal never answers the selection (its picker is up) ...
+  ASSERT_TRUE(restoreWatchdogActive(capture));
+  restoreTimeout(capture);
+  // ... so the attempt is abandoned and the app is asked to re-authorize.
+  ASSERT_TRUE(waitUntil([&] { return stale.count() == 1; }));
+  EXPECT_EQ(stale.first()[0].toString(), "saved-token");
+  EXPECT_EQ(errors.count(), 0);
+  EXPECT_FALSE(starting(capture));
+  EXPECT_FALSE(watchdogActive(capture));
+  EXPECT_FALSE(restoreWatchdogActive(capture));
+  EXPECT_TRUE(pendingPath(capture).isEmpty());
+  EXPECT_EQ(control("SessionCloseCount", {}).arguments().value(0).toInt(), 1);
 }
 
 TEST_F(WaylandPortalCaptureTest, SavedTokenRejectionEmitsStaleInsteadOfPickerRetry) {

@@ -596,21 +596,33 @@ void RecordingManager::finishStoppedRecording() {
   if (m_state != RecordingState::Stopping)
     return;
   m_stopNativeSettled = true;
-  if (!m_pendingCaptureError.isEmpty() && !m_recordingFailed) {
-    if (capturedGameHasEnded()) {
-      qInfo() << "Captured game ended; completing recording normally";
-      m_pendingCaptureError.clear();
-    } else if (!m_shuttingDown && m_captureEndGrace.elapsed() < m_captureEndGraceMs) {
-      // Native consumers have already drained. Give the detector/process exit
-      // a bounded chance to confirm window shutdown before publishing Saved
-      // or Error; do not keep recording dead video during that grace period.
-      m_operationTimer->setInterval(100);
-      m_operationTimer->start();
-      return;
+
+  // The capture source disappeared mid-recording. The compositor cannot tell
+  // us whether that was a launcher/splash surface being replaced, a window
+  // recreated by the game, or a revoked permission, and the user is happy to
+  // keep whatever was captured either way: file this clip and ask the app to
+  // arm a fresh capture for the same game. A game that is closing takes the
+  // same path — the retry is a no-op there (no window, game retired) — so a
+  // normal game exit can never produce a capture error.
+  const bool sourceLost = !m_pendingCaptureError.isEmpty() && !m_recordingFailed;
+  bool rearmCapture = false;
+  if (sourceLost) {
+    const QString identity =
+        m_detectedGameInfo.value("detectedGameKey").toString();
+    // Re-arming is silent only for approved games. Without a portal restore
+    // token the next start would need a picker, which must stay a user
+    // action, so keep the visible failure instead.
+    if (!identity.isEmpty() && m_settings &&
+        !m_settings->getRestoreTokenForIdentity(identity, m_currentGameName)
+             .isEmpty()) {
+      qInfo() << "Capture source lost while recording; filing the clip and"
+              << "re-arming capture";
+      rearmCapture = true;
     } else {
       const auto error = std::exchange(m_pendingCaptureError, {});
       m_recordingFailed = true;
-      qCritical() << "Pipeline error:" << error;
+      qCritical() << "Pipeline error:" << error
+                  << "- no portal token to re-arm capture";
       emit recordingError(error);
     }
   }
@@ -641,17 +653,43 @@ void RecordingManager::finishStoppedRecording() {
       emit captureStartLost(lostGame, lostIdentity);
     return;
   }
+
+  // A source-loss clip that produced no media at all leaves a header-only
+  // file; there is nothing to keep, so it is not filed. This is the only
+  // place this path deletes anything.
+  const bool emptyCapture = sourceLost && settledSizeBytes <= 0;
+  // File quietly only when the game is still visibly running: that is a
+  // launcher/splash hand-off or a window recreation, not the end of a
+  // session. A real close (window already gone) keeps its completion chime
+  // and "recording saved" notice.
+  const bool quietFiling = rearmCapture && m_gameDetector &&
+                           m_gameDetector->hasVisibleWindow();
   const bool pipelineFailed = m_recordingFailed;
-  const bool saved = finalized && !pipelineFailed;
+  const bool saved = finalized && !pipelineFailed && !emptyCapture;
 
   if (m_storage) {
     m_storage->clearExcludedRecordingPath();
   }
 
+  const QString stoppedGame = m_currentGameName;
+  const QString stoppedIdentity =
+      m_detectedGameInfo.value("detectedGameKey").toString();
   QString filePath = m_currentFilePath;
   m_currentFilePath.clear();
   m_currentGameName.clear();
   m_manualWindowId = 0; // Reset manual window ID
+
+  if (!sourceLost) {
+    // Filing a real recording releases this session's re-arm allowance.
+    m_captureLossRetryCount = 0;
+    m_captureLossRetryKey.clear();
+  }
+  if (emptyCapture && m_storage && !filePath.isEmpty()) {
+    if (m_storage->deleteRecording(filePath))
+      qInfo() << "Discarded empty source-loss capture:" << filePath;
+    else
+      qWarning() << "Could not discard empty source-loss capture:" << filePath;
+  }
 
   setState(RecordingState::Idle);
   if (m_storage) {
@@ -662,10 +700,17 @@ void RecordingManager::finishStoppedRecording() {
   // from the settled pipeline, never a GUI-thread native-state wait.
   const qint64 durationMs = m_stopDurationMs;
   const qint64 sizeBytes = settledSizeBytes;
+  // Announce the re-arm before reporting the finished recording: the app
+  // must know a fresh recording is coming before it decides whether to arm
+  // instant replay, otherwise the DVR takes the portal slot the retry needs.
+  if (rearmCapture && takeCaptureLossRetry(stoppedIdentity) &&
+      !stoppedGame.isEmpty() && !stoppedIdentity.isEmpty())
+    emit captureStartLost(stoppedGame, stoppedIdentity);
+
   emit recordingFinished();
   if (saved) {
-    emit recordingStopped(filePath, durationMs, sizeBytes);
-  } else if (!pipelineFailed) {
+    emit recordingStopped(filePath, durationMs, sizeBytes, quietFiling);
+  } else if (!pipelineFailed && !emptyCapture) {
     // Prefer the concrete reason (e.g. a stalled encoder) over the generic
     // finalize wording.
     emit recordingError(m_lastOutputError.isEmpty()
@@ -674,7 +719,10 @@ void RecordingManager::finishStoppedRecording() {
   }
   emit currentGameNameChanged();
 
-  qInfo() << "Recording stopped:" << filePath;
+  if (quietFiling)
+    qInfo() << "Recording stopped (quiet, game still running):" << filePath;
+  else
+    qInfo() << "Recording stopped:" << filePath;
 }
 
 void RecordingManager::setState(RecordingState newState) {
@@ -1228,28 +1276,15 @@ void RecordingManager::updateProgress() {
   emit progressUpdated(recordingDuration(), recordingSize());
 }
 
-bool RecordingManager::capturedGameHasEnded() const {
-  if (!m_gameDetector || m_isManualRecording || m_captureGameName != m_currentGameName)
-    return false;
-  const auto key = m_detectedGameInfo.value("detectedGameKey").toString();
-  if (key.isEmpty() || m_detectedGameInfo.value("detectedGamePid").toLongLong() <= 0)
-    return false;
-  if (m_gameDetector->currentGameKey() != key)
-    return true; // The detector has already retired this pinned identity.
-  const auto windowPid = m_detectedGameInfo.value("capturedWindowPid").toLongLong();
-  if (windowPid > 0 && !GameDetectionService::processExists(windowPid)) {
-    // Launchers can share the Steam identity and survive their game child.
-    // Require actual death of the pinned gameplay process, not merely a
-    // missing/minimized window. A live gameplay successor still wins.
-    for (const auto successor : m_gameDetector->gameplayWindowPids(key)) {
-      if (GameDetectionService::processExists(successor))
-        return false;
-    }
-    return true;
+bool RecordingManager::takeCaptureLossRetry(const QString &identity) {
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  if (m_captureLossRetryKey != identity ||
+      now - m_captureLossRetrySinceMs > 180000) {
+    m_captureLossRetryKey = identity;
+    m_captureLossRetrySinceMs = now;
+    m_captureLossRetryCount = 0;
   }
-  // Same-identity PID handoff must not mistake a dead launcher for game exit.
-  const auto pid = m_gameDetector->currentGamePid();
-  return pid > 0 && !GameDetectionService::processExists(pid);
+  return ++m_captureLossRetryCount <= 3;
 }
 
 bool RecordingManager::takeStartupRetry(const QString &identity) {
@@ -1293,11 +1328,11 @@ void RecordingManager::onCaptureError(const QString &error) {
   }
   if (m_state == RecordingState::Recording && m_captureSource &&
       m_captureSource->lastErrorKind() == IVideoCaptureSource::CaptureErrorKind::SourceUnavailable &&
-      !m_isManualRecording && m_gameDetector && m_captureGameName == m_currentGameName &&
-      !m_detectedGameInfo.value("detectedGameKey").toString().isEmpty() &&
-      m_detectedGameInfo.value("detectedGamePid").toLongLong() > 0) {
+      !m_isManualRecording && m_gameDetector) {
+    // File what was captured and let finishStoppedRecording decide about a
+    // fresh capture. Only an automatic recording can be re-armed; a manual
+    // one keeps the visible error below.
     m_pendingCaptureError = error;
-    m_captureEndGrace.start();
     stopRecording();
     return;
   }

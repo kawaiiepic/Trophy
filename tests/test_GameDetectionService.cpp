@@ -14,6 +14,8 @@
 #include <chrono>
 #include <gtest/gtest.h>
 #include <memory>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "detection/GameDetectionService.h"
 #include "detection/GameListModel.h"
@@ -674,22 +676,35 @@ TEST_F(GameDetectionServiceTest, FocusedFullscreenDetectsWithoutWhitelist) {
   EXPECT_EQ(service->currentGamePid(), 6201);
 }
 
-TEST_F(GameDetectionServiceTest, FocusedWindowedStaysPending) {
+static QList<WindowInfo> snapshotSized(qint64 pid, int w, int h, int ow,
+                                       int oh) {
+  WindowInfo win;
+  win.id = 9500 + (quint64)pid;
+  win.appId = "borderless-game";
+  win.title = "Borderless Game";
+  win.pid = pid;
+  win.focused = true;
+  win.fullscreen = false;
+  win.width = w;
+  win.height = h;
+  win.outputWidth = ow;
+  win.outputHeight = oh;
+  return {win};
+}
+
+TEST_F(GameDetectionServiceTest, FocusedWindowedGameDetectsWithoutFullscreen) {
   QSignalSpy spy(service.get(), &GameDetectionService::gameDetected);
 
   GameClient game;
   ASSERT_TRUE(game.connect());
   ASSERT_TRUE(game.send("START:6301:Some Game\n"));
   pump(300);
+  EXPECT_EQ(spy.count(), 0); // no window evidence yet
 
-  // Focused but windowed: still not a game.
-  monitor.ingestSnapshot(snapshotFor(6301, true, false));
-  pump(300);
-  EXPECT_EQ(spy.count(), 0);
-  EXPECT_TRUE(service->currentGameName().isEmpty());
-
-  // Same game goes fullscreen later: pending candidate promotes.
-  monitor.ingestSnapshot(snapshotFor(6301, true, true));
+  // Focused 800x600 on a large output: a windowed game, not a fullscreen
+  // one. Small windows are legitimate game windows (clicker-style games
+  // never cover the output), so they confirm the pending candidate.
+  monitor.ingestSnapshot(snapshotSized(6301, 800, 600, 2560, 1440));
   pump(300);
   ASSERT_EQ(spy.count(), 1);
   EXPECT_EQ(service->currentGamePid(), 6301);
@@ -712,22 +727,6 @@ TEST_F(GameDetectionServiceTest, UnfocusedFullscreenStaysPending) {
 
 // --- Borderless-windowed coverage (no fullscreen flag) ---
 
-static QList<WindowInfo> snapshotSized(qint64 pid, int w, int h, int ow,
-                                       int oh) {
-  WindowInfo win;
-  win.id = 9500 + (quint64)pid;
-  win.appId = "borderless-game";
-  win.title = "Borderless Game";
-  win.pid = pid;
-  win.focused = true;
-  win.fullscreen = false;
-  win.width = w;
-  win.height = h;
-  win.outputWidth = ow;
-  win.outputHeight = oh;
-  return {win};
-}
-
 TEST_F(GameDetectionServiceTest, BorderlessCoveringOutputDetects) {
   QSignalSpy spy(service.get(), &GameDetectionService::gameDetected);
 
@@ -745,7 +744,7 @@ TEST_F(GameDetectionServiceTest, BorderlessCoveringOutputDetects) {
   EXPECT_EQ(service->currentGamePid(), 6501);
 }
 
-TEST_F(GameDetectionServiceTest, FocusedSmallWindowStaysPending) {
+TEST_F(GameDetectionServiceTest, FocusedTinyWindowStaysPending) {
   QSignalSpy spy(service.get(), &GameDetectionService::gameDetected);
 
   GameClient game;
@@ -753,11 +752,57 @@ TEST_F(GameDetectionServiceTest, FocusedSmallWindowStaysPending) {
   ASSERT_TRUE(game.send("START:6601:Borderless Game\n"));
   pump(300);
 
-  // Focused 800x600 on 1920x1080: not coverage, stays pending.
-  monitor.ingestSnapshot(snapshotSized(6601, 800, 600, 1920, 1080));
+  // Focused 40x30 on 1920x1080: below the minimum game-window size, so it
+  // is a tooltip/degenerate surface rather than a playable window.
+  monitor.ingestSnapshot(snapshotSized(6601, 40, 30, 1920, 1080));
   pump(300);
   EXPECT_EQ(spy.count(), 0);
   EXPECT_TRUE(service->currentGameName().isEmpty());
+}
+
+TEST_F(GameDetectionServiceTest, WindowedGameIsReadyForPromptAndCapture) {
+  // Windowed play must not be gated on fullscreen / 90% coverage: a small
+  // windowed game (clicker-style) is a valid capture target. Only
+  // degenerate surfaces are ignored, and those can still be prompted for.
+  service->addToWhitelist("Borderless Game", "Borderless Game");
+
+  GameClient game;
+  ASSERT_TRUE(game.connect());
+  ASSERT_TRUE(game.send("START:6801:Borderless Game\n"));
+  pump(300);
+
+  monitor.ingestSnapshot(snapshotSized(6801, 800, 600, 1920, 1080));
+  pump(300);
+  ASSERT_EQ(service->currentGamePid(), 6801);
+  EXPECT_TRUE(service->hasVisibleWindow());
+  EXPECT_TRUE(service->hasGameWindow());
+  const QString described = service->describeTrackedGameWindows();
+  EXPECT_TRUE(described.contains("size=800x600")) << described.toStdString();
+  EXPECT_TRUE(described.contains("cover=0.23")) << described.toStdString();
+
+  // A degenerate 40x30 surface is not a capture target, but it is still a
+  // window, so asking the user to authorize it is harmless.
+  monitor.ingestSnapshot(snapshotSized(6801, 40, 30, 1920, 1080));
+  pump(100);
+  EXPECT_FALSE(service->hasVisibleWindow());
+  EXPECT_TRUE(service->hasGameWindow());
+
+  // Minimized windows are neither.
+  QList<WindowInfo> minimized = snapshotSized(6801, 800, 600, 1920, 1080);
+  minimized[0].minimized = true;
+  minimized[0].focused = false;
+  monitor.ingestSnapshot(minimized);
+  pump(100);
+  EXPECT_FALSE(service->hasVisibleWindow());
+  EXPECT_FALSE(service->hasGameWindow());
+  EXPECT_TRUE(service->describeTrackedGameWindows().contains("minimized=true"))
+      << service->describeTrackedGameWindows().toStdString();
+
+  // Fullscreen still qualifies as before.
+  monitor.ingestSnapshot(snapshotSized(6801, 1920, 1080, 1920, 1080));
+  pump(100);
+  EXPECT_TRUE(service->hasVisibleWindow());
+  EXPECT_TRUE(service->hasGameWindow());
 }
 
 TEST_F(GameDetectionServiceTest, UnknownGeometryStillNeedsFlag) {
@@ -768,7 +813,8 @@ TEST_F(GameDetectionServiceTest, UnknownGeometryStillNeedsFlag) {
   ASSERT_TRUE(game.send("START:6701:Borderless Game\n"));
   pump(300);
 
-  // Backend reported no geometry: coverage rule cannot apply.
+  // Backend reported no geometry and the window is not flagged fullscreen:
+  // there is no positive evidence that this is a game window.
   monitor.ingestSnapshot(snapshotSized(6701, 0, 0, 0, 0));
   pump(300);
   EXPECT_EQ(spy.count(), 0);
@@ -1075,6 +1121,41 @@ TEST_F(GameDetectionServiceTest, ProcessExistsReflectsLiveness) {
   child.kill();
   ASSERT_TRUE(child.waitForFinished(5000));
   EXPECT_FALSE(GameDetectionService::processExists(pid));
+}
+
+TEST_F(GameDetectionServiceTest, ProcessExistsTreatsUnreapedZombieAsExited) {
+  // A Steam/Proton title that exits but is not reaped yet stays a zombie:
+  // kill(pid, 0) still succeeds, and treating it as alive delayed the
+  // 2026-11-14 close classification past the real exit. The child only
+  // calls _exit(); we deliberately never reap it until after the assert.
+  const pid_t child = ::fork();
+  ASSERT_GE(child, 0);
+  if (child == 0)
+    ::_exit(0);
+
+  bool zombieObserved = false;
+  for (int i = 0; i < 400; ++i) {
+    QFile stat(QStringLiteral("/proc/%1/stat").arg(child));
+    if (stat.open(QIODevice::ReadOnly)) {
+      const QByteArray fields = stat.read(512);
+      qsizetype at = fields.lastIndexOf(')') + 1;
+      while (at < fields.size() && fields.at(at) == ' ')
+        ++at;
+      if (at < fields.size() && fields.at(at) == 'Z') {
+        zombieObserved = true;
+        break;
+      }
+    } else {
+      break; // Already reaped by something else: nothing left to test.
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  if (zombieObserved)
+    EXPECT_FALSE(GameDetectionService::processExists(child));
+  int status = 0;
+  (void)::waitpid(child, &status, 0);
+  if (!zombieObserved)
+    GTEST_SKIP() << "child was reaped before a zombie state could be observed";
 }
 
 TEST_F(GameDetectionServiceTest, LivenessWatchdogClosesDeadGame) {

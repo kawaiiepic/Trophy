@@ -1035,8 +1035,11 @@ protected:
     }
     if (timing == 1) QTimer::singleShot(150, &game, [&] { game.terminate(); });
     ASSERT_TRUE(waitFor([&] { return recorder.state() == RecordingManager::RecordingState::Idle; }));
-    EXPECT_EQ(saved.size(), timing < 2 ? 1 : 0);
-    EXPECT_EQ(errors.size(), timing < 2 ? 0 : 1);
+    // A lost source always files what was captured now: a game that closed
+    // and a live game whose capture was revoked take the same path (the app
+    // decides about re-arming from the game state).
+    EXPECT_EQ(saved.size(), 1);
+    EXPECT_EQ(errors.size(), 0);
     EXPECT_EQ(finished.size(), 1);
     checkMedia(path);
     if (game.state() != QProcess::NotRunning) {

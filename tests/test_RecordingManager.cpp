@@ -86,19 +86,21 @@ public:
 
 class FinalizationMuxer : public IMuxer {
 public:
-  explicit FinalizationMuxer(bool succeeds, bool writesSucceed = true)
-      : m_succeeds(succeeds), m_writesSucceed(writesSucceed) {}
+  explicit FinalizationMuxer(bool succeeds, bool writesSucceed = true,
+                             qint64 bytes = 0)
+      : m_succeeds(succeeds), m_writesSucceed(writesSucceed), m_bytes(bytes) {}
   bool initialize(const QString &) override { return true; }
   int addStream(const StreamInfo &) override { return 0; }
   bool writeHeader() override { return true; }
   bool writePacket(const EncodedPacket &) override { return m_writesSucceed; }
   bool finalize() override { return m_succeeds; }
   QString outputPath() const override { return {}; }
-  int64_t bytesWritten() const override { return 0; }
+  int64_t bytesWritten() const override { return m_bytes; }
   QString formatName() const override { return "fake"; }
 private:
   bool m_succeeds;
   bool m_writesSucceed;
+  qint64 m_bytes;
 };
 
 struct ManagerOperationGate {
@@ -513,13 +515,21 @@ protected:
     QProcess game;
     game.start("sleep", {"30"});
     ASSERT_TRUE(game.waitForStarted());
+    // 8-15 model a same-identity launcher surviving its game child; 16-19 are
+    // the source-loss filing/re-arm cases.
+    const bool launcherScenario = scenario >= 8 && scenario <= 15;
     QProcess launcher;
-    if (scenario >= 8) {
+    if (launcherScenario) {
       launcher.start("sleep", {"30"});
       ASSERT_TRUE(launcher.waitForStarted());
     }
     SettingsManager settings;
     settings.setRecordingsPath(tempDir.path());
+    // Re-arming a lost capture is silent only for approved games; scenario 19
+    // deliberately has no portal token.
+    if (scenario != 19)
+      settings.setRestoreTokenForIdentity("steam_app_42424242", "Exit fixture",
+                                          "fixture-token");
     StorageManager storage(tempDir.path());
     WaylandWindowMonitor monitor;
     GameDetectionService detector;
@@ -535,21 +545,52 @@ protected:
     recorder.setSettingsManager(&settings);
     recorder.setStorageManager(&storage);
     recorder.setGameDetectionService(&detector);
-    recorder.m_captureEndGraceMs = 200;
     QPointer<PendingCapture> capture;
     installPendingCapture(recorder, capture);
     recorder.m_pipelineBuilder = [&] {
-      recorder.m_muxer = std::make_unique<FinalizationMuxer>(scenario != 4 && scenario != 14);
+      const bool finalizes = scenario != 4 && scenario != 14;
+      // Scenario 17 is a source-loss clip that produced no media at all.
+      const qint64 mediaBytes = scenario == 17 ? 0 : 8192;
+      recorder.m_muxer =
+          std::make_unique<FinalizationMuxer>(finalizes, true, mediaBytes);
       return true;
     };
     QSignalSpy saved(&recorder, &RecordingManager::recordingStopped);
     QSignalSpy errors(&recorder, &RecordingManager::recordingError);
     QSignalSpy finished(&recorder, &RecordingManager::recordingFinished);
+    QSignalSpy lost(&recorder, &RecordingManager::captureStartLost);
+    // The re-arm must be announced before the finished notification so the
+    // app does not arm instant replay into the retry's portal slot.
+    QStringList order;
+    QObject::connect(&recorder, &RecordingManager::captureStartLost,
+                     &recorder, [&order](const QString &, const QString &) {
+                       order << QStringLiteral("lost");
+                     });
+    QObject::connect(&recorder, &RecordingManager::recordingFinished,
+                     &recorder, [&order]() {
+                       order << QStringLiteral("finished");
+                     });
     recorder.startRecording(scenario == 5 ? QString() : QString("Exit fixture"));
     ASSERT_FALSE(capture.isNull());
     recorder.completePipelineAndStart();
     ASSERT_TRUE(recorder.isRecording());
-    if (scenario >= 8) {
+    QString stubPath;
+    if (scenario >= 16) {
+      // A real file so the keep/delete decision can be observed.
+      stubPath = recorder.currentFilePath();
+      ASSERT_FALSE(stubPath.isEmpty());
+      QFile stub(stubPath);
+      ASSERT_TRUE(stub.open(QIODevice::WriteOnly));
+      stub.write("stub");
+      stub.close();
+    }
+    if (scenario == 18) {
+      // Exhaust the re-arm allowance for this identity.
+      recorder.m_captureLossRetryKey = "steam_app_42424242";
+      recorder.m_captureLossRetryCount = 3;
+      recorder.m_captureLossRetrySinceMs = QDateTime::currentMSecsSinceEpoch();
+    }
+    if (launcherScenario) {
       ASSERT_EQ(recorder.m_detectedGameInfo.value("capturedWindowPid").toLongLong(),
                 game.processId());
       // Both processes report the same Steam identity. Returning focus to
@@ -562,8 +603,7 @@ protected:
       launcherWindow.width = 500; launcherWindow.height = 350;
       launcherWindow.outputWidth = 1920; launcherWindow.outputHeight = 1080;
       if (scenario == 11 || scenario == 12 || scenario == 15) {
-        // A real gameplay successor, including one minimized by the user,
-        // must not be mistaken for the surviving small launcher.
+        // A real gameplay successor, including one minimized by the user.
         launcherWindow.fullscreen = true;
       }
       monitor.ingestSnapshot({launcherWindow});
@@ -590,7 +630,7 @@ protected:
     if (scenario == 2) {
       window.minimized = true;
       monitor.ingestSnapshot({window});
-      EXPECT_FALSE(detector.hasVisibleWindow()); // Not proof of game exit.
+      EXPECT_FALSE(detector.hasVisibleWindow());
     }
     if (scenario == 0 || scenario == 3 || scenario == 4 || scenario == 5 ||
         scenario == 8 || scenario == 11 || scenario == 12 || scenario == 14 || scenario == 15) {
@@ -606,10 +646,65 @@ protected:
     if (scenario == 1 || scenario == 9)
       QTimer::singleShot(30, &game, [&] { game.terminate(); });
     ASSERT_TRUE(waitForIdle(recorder));
-    const bool normal = scenario == 0 || scenario == 1 || scenario == 6 ||
-                        scenario == 8 || scenario == 9;
-    EXPECT_EQ(saved.size(), normal ? 1 : 0);
-    EXPECT_EQ(errors.size(), normal ? 0 : 1);
+
+    const bool nonSourceFailure = scenario == 3 || scenario == 4 ||
+                                  scenario == 5 || scenario == 7 ||
+                                  scenario == 14;
+    if (scenario == 17) {
+      // A source-loss clip with no media at all is removed, not filed, and
+      // the capture is still re-armed.
+      EXPECT_EQ(saved.size(), 0);
+      EXPECT_EQ(errors.size(), 0);
+      EXPECT_EQ(lost.size(), 1);
+      EXPECT_FALSE(QFile::exists(stubPath));
+      EXPECT_EQ(order, (QStringList{QStringLiteral("lost"),
+                                    QStringLiteral("finished")}));
+    } else if (scenario == 19) {
+      // No portal token: the capture cannot be re-armed, so the loss keeps
+      // the visible failure (and the partial file stays on disk).
+      EXPECT_EQ(saved.size(), 0);
+      EXPECT_EQ(errors.size(), 1);
+      EXPECT_EQ(lost.size(), 0);
+      EXPECT_TRUE(QFile::exists(stubPath));
+    } else if (nonSourceFailure) {
+      // A non-source failure keeps its error; a lost source still re-arms.
+      EXPECT_EQ(saved.size(), 0);
+      EXPECT_EQ(errors.size(), 1);
+      EXPECT_EQ(lost.size(), (scenario == 4 || scenario == 14) ? 1 : 0);
+      if (scenario >= 16) EXPECT_TRUE(QFile::exists(stubPath));
+    } else if (scenario == 6) {
+      // A capture error queued after an explicit stop cannot turn the save
+      // into a failure or a re-arm.
+      EXPECT_EQ(saved.size(), 1);
+      EXPECT_EQ(errors.size(), 0);
+      EXPECT_EQ(lost.size(), 0);
+      if (saved.size() == 1) EXPECT_FALSE(saved.at(0).at(3).toBool());
+    } else if (scenario == 18) {
+      // Re-arm allowance exhausted: the clip is still filed quietly.
+      EXPECT_EQ(saved.size(), 1);
+      EXPECT_EQ(errors.size(), 0);
+      EXPECT_EQ(lost.size(), 0);
+      if (saved.size() == 1) EXPECT_TRUE(saved.at(0).at(3).toBool());
+      EXPECT_TRUE(QFile::exists(stubPath));
+    } else {
+      // Any other source loss is filed quietly and re-armed.
+      EXPECT_EQ(saved.size(), 1);
+      EXPECT_EQ(errors.size(), 0);
+      EXPECT_EQ(lost.size(), 1);
+      // Filed quietly only while the game is still visibly running; a
+      // minimized window (2, 12) or an empty snapshot (15) is not visible and
+      // keeps the normal save feedback.
+      if (saved.size() == 1) {
+        const bool expectQuiet =
+            scenario != 2 && scenario != 12 && scenario != 15;
+        EXPECT_EQ(saved.at(0).at(3).toBool(), expectQuiet);
+      }
+      if (scenario == 16) {
+        EXPECT_TRUE(QFile::exists(stubPath));
+        EXPECT_EQ(order, (QStringList{QStringLiteral("lost"),
+                                      QStringLiteral("finished")}));
+      }
+    }
     EXPECT_EQ(finished.size(), 1);
     EXPECT_TRUE(recorder.currentFilePath().isEmpty());
     if (game.state() != QProcess::NotRunning) {
@@ -987,20 +1082,24 @@ TEST_F(RecordingManagerTest, StaleRestoreSettlesBeforeReauthorizationAndRetry) {
 
 TEST_F(RecordingManagerTest, CaptureSourceLossAfterGameExitSavesNormally) { captureEndRace(0); }
 TEST_F(RecordingManagerTest, CaptureSourceLossBeforeGameExitDrainsThenSavesNormally) { captureEndRace(1); }
-TEST_F(RecordingManagerTest, CaptureSourceLossWhileGameLivesStillFails) { captureEndRace(2); }
+TEST_F(RecordingManagerTest, CaptureSourceLossWhileGameLivesFilesAndRearms) { captureEndRace(2); }
 TEST_F(RecordingManagerTest, CaptureServiceFailureIsNotHiddenByGameExit) { captureEndRace(3); }
 TEST_F(RecordingManagerTest, CaptureGameExitDoesNotHideFinalizationFailure) { captureEndRace(4); }
-TEST_F(RecordingManagerTest, ManualCaptureSourceLossDoesNotBorrowDetectedGameExit) { captureEndRace(5); }
+TEST_F(RecordingManagerTest, ManualCaptureSourceLossStaysAnError) { captureEndRace(5); }
 TEST_F(RecordingManagerTest, QueuedCaptureLossAfterExplicitStopDoesNotTurnSaveIntoError) { captureEndRace(6); }
-TEST_F(RecordingManagerTest, CaptureGameExitGraceDoesNotHideOutputFailure) { captureEndRace(7); }
+TEST_F(RecordingManagerTest, OutputFailureDuringStopStaysAnError) { captureEndRace(7); }
 TEST_F(RecordingManagerTest, CaptureGameExitWithSurvivingLauncherSavesNormally) { captureEndRace(8); }
 TEST_F(RecordingManagerTest, CaptureLossBeforeGameExitWithSurvivingLauncherSavesNormally) { captureEndRace(9); }
-TEST_F(RecordingManagerTest, CaptureLossWithLauncherFocusedButGameAliveStillFails) { captureEndRace(10); }
-TEST_F(RecordingManagerTest, CaptureLossWithLiveGameplaySuccessorStillFails) { captureEndRace(11); }
-TEST_F(RecordingManagerTest, CaptureLossWithMinimizedGameplaySuccessorStillFails) { captureEndRace(12); }
+TEST_F(RecordingManagerTest, CaptureLossWithLauncherFocusedButGameAliveFilesAndRearms) { captureEndRace(10); }
+TEST_F(RecordingManagerTest, CaptureLossWithLiveGameplaySuccessorFilesAndRearms) { captureEndRace(11); }
+TEST_F(RecordingManagerTest, CaptureLossWithMinimizedGameplaySuccessorFilesAndRearms) { captureEndRace(12); }
 TEST_F(RecordingManagerTest, CaptureProgressDoesNotReplaceGamePidWithLauncherPid) { captureEndRace(13); }
 TEST_F(RecordingManagerTest, CaptureLauncherReturnDoesNotHideFinalizationFailure) { captureEndRace(14); }
 TEST_F(RecordingManagerTest, CaptureProgressFollowsGameplayHandoffWithoutBorrowingOldPidExit) { captureEndRace(15); }
+TEST_F(RecordingManagerTest, SourceLossIsFiledQuietlyAndRearmsCapture) { captureEndRace(16); }
+TEST_F(RecordingManagerTest, SourceLossWithoutMediaIsNotFiled) { captureEndRace(17); }
+TEST_F(RecordingManagerTest, SourceLossRearmIsBounded) { captureEndRace(18); }
+TEST_F(RecordingManagerTest, SourceLossWithoutATokenKeepsTheVisibleError) { captureEndRace(19); }
 
 TEST_F(RecordingManagerTest, GenericPortalRetainsGamePidForAudioPreparation) { audioPidHandoff(0); }
 TEST_F(RecordingManagerTest, PortalAudioPidTakesPriorityOverDetectedPid) { audioPidHandoff(1); }

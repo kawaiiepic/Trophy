@@ -317,6 +317,14 @@ WaylandPortalCapture::WaylandPortalCapture(QObject *parent)
   m_startWatchdog.setInterval(20000);
   connect(&m_startWatchdog, &QTimer::timeout, this,
           &WaylandPortalCapture::onStartWatchdogTimeout);
+  // Silent-restore expectation. A working restore answers in tens of
+  // milliseconds; anything slower means the portal is prompting (usually
+  // because the token's stored window no longer matches). Keeping this well
+  // above a slow-but-real restore leaves the picker case unambiguous.
+  m_restoreWatchdog.setSingleShot(true);
+  m_restoreWatchdog.setInterval(1500);
+  connect(&m_restoreWatchdog, &QTimer::timeout, this,
+          &WaylandPortalCapture::onRestoreWatchdogTimeout);
   ensureResponseSubscription();
   auto *portalOwner = new QDBusServiceWatcher(
       "org.freedesktop.portal.Desktop", QDBusConnection::sessionBus(),
@@ -435,12 +443,27 @@ void WaylandPortalCapture::clearStartGuard() {
   // (the bool alone can't tell them apart).
   ++m_startGeneration;
   m_startWatchdog.stop();
+  m_restoreWatchdog.stop();
   // No per-request disconnect: the Response subscription is permanent
   // (see ensureResponseSubscription) and every Response slot keys off
   // the pending path + stage + generation, so stale signals from older
   // attempts are dropped without touching the shared subscription.
   m_pendingRequestPath.clear();
   m_pendingStage = PendingStage::None;
+}
+
+void WaylandPortalCapture::onRestoreWatchdogTimeout() {
+  if (!m_starting || m_attemptGeneration != m_startGeneration ||
+      m_pendingStage != PendingStage::Select || !m_restoreTokenUsed)
+    return;
+  qWarning() << "Wayland Portal: saved restore token did not restore silently"
+             << "- abandoning the picker and re-authorizing";
+  // Closing the session cancels the portal's pending selection (and its
+  // picker where the portal honours that); the token is then discarded by
+  // the app, which offers an explicit re-authorization.
+  closePortalSession();
+  clearStartGuard();
+  emit restoreTokenStale(m_restoreToken);
 }
 
 void WaylandPortalCapture::onStartWatchdogTimeout() {
@@ -701,6 +724,8 @@ void WaylandPortalCapture::requestSelectSources() {
                    ? QStringLiteral("none")
                    : m_restoreToken.left(4) + QStringLiteral("..."));
 
+  if (m_restoreTokenUsed)
+    m_restoreWatchdog.start();
   // Async: the method reply arrives in onSelectSourcesCallFinished on the
   // GUI thread (same m_starting staleness rule as the CreateSession leg).
   auto call = QDBusMessage::createMethodCall(
@@ -755,6 +780,7 @@ void WaylandPortalCapture::onSourcesSelected(unsigned int response,
     return;
   m_pendingRequestPath.clear();
   m_pendingStage = PendingStage::None;
+  m_restoreWatchdog.stop();
 
   if (!m_starting || m_attemptGeneration != m_startGeneration)
     return; // Stale response after timeout/cancel; session already dropped.
