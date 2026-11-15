@@ -741,6 +741,26 @@ void Application::connectSignals() {
               }
             }
           });
+  // Discovery hint: an unrecognised fullscreen window. Offer the Games page
+  // instead of guessing — never start a capture from here.
+  connect(m_gameDetector.get(), &GameDetectionService::undiscoveredGameSeen,
+          this, [this](const QString &appId, const QString &title, qint64 pid) {
+            if (!m_notificationService)
+              return;
+            if ((m_recordingManager && m_recordingManager->isRecording()) ||
+                (m_replayManager && m_replayManager->isActive()))
+              return; // focus is on the capture, not on cataloguing
+            m_discoveryHintAppId = appId;
+            m_discoveryHintTitle = title;
+            qCInfo(appLog) << "Offering to add undetected window" << appId
+                           << "(PID:" << pid << ")";
+            m_notificationService->showNotification(
+                QStringLiteral("Add %1 to Games?").arg(title),
+                QStringLiteral("Trophy can record %1 automatically and label its "
+                               "audio. Click to add it to your Games list.")
+                    .arg(title),
+                "trophy", 8000, 1, false, "add-game", "Add to Games");
+          });
   // Approval is derived from portal restore tokens: whenever the token
   // map changes, push the holding games to the detector so the Games
   // page's Ready section stays truthful.
@@ -1071,6 +1091,26 @@ void Application::connectSignals() {
             if (action == QStringLiteral("open-update")) {
               openUpdateDialog();
               m_notificationService->closeLastNotification();
+              return;
+            }
+            // Discovery hint: open the Games page with the Add Game dialog
+            // prefilled for the window the notice named. Never starts
+            // capture; adding the game goes through the normal Games page
+            // path. Body clicks arrive as "default" on daemons that support
+            // it, so both ids are accepted while a hint is pending.
+            if (action == QStringLiteral("add-game") ||
+                (action == QStringLiteral("default") &&
+                 !m_discoveryHintTitle.isEmpty())) {
+              const QString hintTitle = m_discoveryHintTitle;
+              m_discoveryHintAppId.clear();
+              m_discoveryHintTitle.clear();
+              m_notificationService->closeLastNotification();
+              if (!hintTitle.isEmpty()) {
+                showMainWindow();
+                emit gamesPageRequested();
+                m_pendingAddGameQuery = hintTitle;
+                emit pendingAddGameQueryChanged();
+              }
               return;
             }
             // Three-way authorize prompt: "authorize" starts capture and
@@ -2045,6 +2085,13 @@ bool Application::restartTrophy() {
 void Application::openUpdateDialog() {
   showMainWindow();
   emit updateDialogRequested();
+}
+
+void Application::clearPendingAddGameQuery() {
+  if (m_pendingAddGameQuery.isEmpty())
+    return;
+  m_pendingAddGameQuery.clear();
+  emit pendingAddGameQueryChanged();
 }
 
 QVariantMap Application::captureHealth() const {

@@ -77,6 +77,9 @@ class Application : public QApplication {
   Q_PROPERTY(bool vulkanLayerRegistered READ vulkanLayerRegistered NOTIFY detectionStatusChanged)
   Q_PROPERTY(int vulkanBundledHelperVersion READ vulkanBundledHelperVersion NOTIFY detectionStatusChanged)
   Q_PROPERTY(int vulkanHelperVersion READ vulkanHelperVersion NOTIFY detectionStatusChanged)
+  // Discovery hint: the Games page picks this up, opens the Add Game dialog
+  // and clears it. Empty means "nothing to add".
+  Q_PROPERTY(QString pendingAddGameQuery READ pendingAddGameQuery NOTIFY pendingAddGameQueryChanged)
 
 public:
   explicit Application(int &argc, char **argv);
@@ -144,6 +147,8 @@ public:
   // file dialogs apply. Refuses while recording, like installUpdate().
   Q_INVOKABLE bool restartTrophy();
   Q_INVOKABLE void openUpdateDialog();
+  Q_INVOKABLE void clearPendingAddGameQuery();
+  QString pendingAddGameQuery() const { return m_pendingAddGameQuery; }
   Q_INVOKABLE QVariantMap captureHealth() const;
   // Track mute that follows the active pipeline (the dashboard meters).
   // The recording and the DVR own different mixers; muting only one
@@ -186,6 +191,8 @@ signals:
   void detectionStatusChanged();
   void fatalError(const QString &message);
   void updateDialogRequested();
+  void gamesPageRequested();
+  void pendingAddGameQueryChanged();
 
 private:
   void queryCaptureAvailability();
@@ -240,6 +247,11 @@ private:
   QString m_mainQmlPath; // Path for live-reload
   QString m_pendingAutoRecordGame;
   QString m_pendingDvrGame;
+  // Discovery hint: the window the notice was raised for, and the query the
+  // Games page should prefill once the user accepts.
+  QString m_discoveryHintAppId;
+  QString m_discoveryHintTitle;
+  QString m_pendingAddGameQuery;
   // A lost capture asked for a fresh recording; instant replay must not take
   // the portal slot before that retry starts.
   bool m_recordingRearmPending = false;

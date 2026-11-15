@@ -143,7 +143,7 @@ Trophy combines optional Vulkan reporter events with game identity and window co
 
 Both reporters are opt-in. **Neither is certified compatible with anti-cheat systems.** Leave them disabled for protected games unless the game's policy permits them. Trophy does not bypass anti-cheat software.
 
-OpenGL games do not need a reporter: Steam identity from the process environment/library plus the focused-fullscreen window is enough. A non-Steam OpenGL game is recognized when you add it to the Games page; Trophy does not load a preload library into unrelated applications. Host/Steam-runtime and 32-bit reporter compatibility are not universally established.
+OpenGL games do not need a reporter: Steam identity from the process environment/library plus a focused window is enough. A non-Steam OpenGL game is recognized when you add it to the Games page; Trophy does not load a preload library into unrelated applications. When it sees a fullscreen window it cannot identify, Trophy offers to add it to the Games page instead of recording it on its own. Host/Steam-runtime and 32-bit reporter compatibility are not universally established.
 
 See [reporter scope and packaging cautions](../packaging/README.md#reporter-scope-and-anti-cheat-caution) for more detail.
 

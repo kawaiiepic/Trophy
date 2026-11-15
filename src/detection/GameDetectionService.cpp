@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QCoreApplication>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QRegularExpression>
@@ -446,6 +447,72 @@ void GameDetectionService::onMonitorWindowsChanged() {
   // Focused/fullscreen + evidence gating inside makes reruns idempotent.
   if (m_currentGameName.isEmpty())
     reconcileRunningGames();
+  // Nothing detected and nothing tracked: offer the Games page for a
+  // fullscreen window that looks like a game but has no evidence yet.
+  if (m_currentGameName.isEmpty())
+    hintUndetectedGame();
+}
+
+bool GameDetectionService::isUndetectedGameCandidate(const WindowInfo &w) {
+  if (w.pid <= 0 || w.pid == QCoreApplication::applicationPid())
+    return false;
+  // Strict on purpose: a windowed browser or chat app is common, a
+  // fullscreen one is a deliberate act. Borderless fullscreen counts.
+  if (w.minimized || !w.focused)
+    return false;
+  if (!w.fullscreen && !coversOutput(w))
+    return false;
+  const QString name = w.appId.isEmpty() ? w.title : w.appId;
+  if (name.isEmpty())
+    return false;
+
+  const ReporterIdentity identity = reporterIdentity(w.pid, name, 0);
+  if (identity.ignored)
+    return false;
+  const QString key = identity.key.isEmpty() ? name : identity.key;
+  if (m_whitelist->isWhitelisted(name) || m_whitelist->isWhitelisted(key))
+    return false;
+  if (isBlacklistedIdentity(name, identity.name) ||
+      isBlacklistedIdentity(key, identity.executable))
+    return false;
+  if (m_pidToGameName.contains(w.pid) || m_pidToRawKey.key(key, 0) != 0)
+    return false; // already tracked under another spelling
+  // Anything detection already has evidence for is not "undetected".
+  if (GameIdentity::launcherAncestry(w.pid).launcher)
+    return false;
+  if (steamAppIdForPid(w.pid) > 0 || processLooksLikeSteamGame(w.pid))
+    return false;
+  // An installed application (browser, player, game with a desktop entry)
+  // is never a hint. Only apps the desktop cannot identify at all — itch
+  // zips, AppImages, custom scripts — reach the user.
+  if (!w.appId.isEmpty() && GameIdentity::desktopEntryFor(w.appId).found)
+    return false;
+  return true;
+}
+
+void GameDetectionService::hintUndetectedGame() {
+  if (!m_monitor || !m_currentGameName.isEmpty())
+    return;
+  if (m_hintCount >= m_hintMax)
+    return;
+  const qint64 now = m_uptimeClock.elapsed();
+  if (m_lastHintAt >= 0 && now - m_lastHintAt < m_hintSpacingMs)
+    return;
+  for (const WindowInfo &w : m_monitor->windows()) {
+    if (!isUndetectedGameCandidate(w))
+      continue;
+    const QString hintKey = w.appId.isEmpty() ? w.title : w.appId;
+    if (m_hintedKeys.contains(hintKey))
+      continue;
+    m_hintedKeys.insert(hintKey);
+    ++m_hintCount;
+    m_lastHintAt = now;
+    qInfo() << "Undetected fullscreen window:" << hintKey
+            << "(PID:" << w.pid << ")- offering the Games page";
+    emit undiscoveredGameSeen(hintKey, w.title.isEmpty() ? hintKey : w.title,
+                              w.pid);
+    return; // one offer per snapshot
+  }
 }
 
 void GameDetectionService::reconcileRunningGames() {

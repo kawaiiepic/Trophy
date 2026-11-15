@@ -193,6 +193,17 @@ public:
 signals:
   void gameDetected(const QString &gameName, qint64 pid);
   void gameClosed(const QString &gameName);
+  /**
+   * @brief A fullscreen window nobody has evidence for.
+   *
+   * Discovery hint: the window looks like a game (focused, fullscreen or
+   * output-covering) but has no reporter/launcher/desktop-entry/Steam
+   * evidence, so detection stays out of it. Application offers to add it to
+   * the Games page — never starts a capture. Already rate limited here: one
+   * per window key per launch, a small launch total and a spacing floor.
+   */
+  void undiscoveredGameSeen(const QString &appId, const QString &title,
+                            qint64 pid);
   void currentGameChanged();
   void recentGamesChanged();
   void whitelistChanged();
@@ -243,6 +254,10 @@ private:
   bool isBlacklistedIdentity(const QString &rawKey,
                              const QString &displayName) const;
   bool processLooksLikeSteamGame(qint64 pid);
+  // Discovery hint: a fullscreen window with no evidence at all. Never
+  // starts anything; rate limits live in the members below.
+  void hintUndetectedGame();
+  bool isUndetectedGameCandidate(const WindowInfo &w);
   // Evidence providers (result + monotonic ms at check); cached because
   // windowsChanged fires for every focus/title change and these read /proc.
   GameIdentity::LaunchProvenance launcherProvenance(qint64 pid);
@@ -352,6 +367,16 @@ private:
   static constexpr qint64 kDesktopCacheTtlMs = 60000;
   static constexpr int kCacheCap = 256;
   QElapsedTimer m_uptimeClock;
+
+  // Discovery-hint bookkeeping (see undiscoveredGameSeen): keys already
+  // offered this launch, how many were offered, and when the last one was.
+  QSet<QString> m_hintedKeys;
+  int m_hintCount = 0;
+  qint64 m_lastHintAt = -1;
+  // Tuned for a human: a couple per launch, spaced out. Tests lower these
+  // through the friend seam.
+  int m_hintMax = 3;
+  qint64 m_hintSpacingMs = 20000;
 
   WaylandWindowMonitor *m_monitor = nullptr;
   PipeWireStreamWatcher *m_streamWatcher = nullptr;

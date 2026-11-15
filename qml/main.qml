@@ -710,6 +710,13 @@ ApplicationWindow {
                                 window.currentPage = 3
                                 infoPage.showUpdateDialog = true
                             }
+                            // Discovery hint: jump to Games; the page opens
+                            // its Add dialog from app.pendingAddGameQuery.
+                            function onGamesPageRequested() {
+                                if (playerPage.visible)
+                                    playerPage.close()
+                                window.currentPage = 1
+                            }
                         }
                     }
 

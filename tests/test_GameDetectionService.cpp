@@ -258,6 +258,8 @@ protected:
         TrophyBackend::AudioStreamInfo{0, pid, binary, binary});
   }
   void detachWindowMonitor() { service->setWindowMonitor(nullptr); }
+  // TEST_F bodies are not friends; the fixture class is.
+  void setHintSpacing(qint64 ms) { service->m_hintSpacingMs = ms; }
   void ageSteamVerdict(qint64 pid, bool verdict, bool expired) {
     service->m_steamCheckCache.insert(
         pid, qMakePair(verdict, service->m_uptimeClock.elapsed() -
@@ -1217,6 +1219,130 @@ TEST_F(GameDetectionServiceTest, ReconcileIgnoresNonGameDesktopEntry) {
 
   EXPECT_EQ(spy.count(), 0);
   EXPECT_TRUE(service->currentGameName().isEmpty());
+}
+
+TEST_F(GameDetectionServiceTest, HintOfferedForUnknownFullscreenWindow) {
+  // Discovery hint: a fullscreen window with no evidence at all. Nobody
+  // claims it, so the user is offered the Games page — no capture starts.
+  setHintSpacing(0);
+  QProcess child;
+  child.start("sleep", {"30"});
+  ASSERT_TRUE(child.waitForStarted(5000));
+  const qint64 pid = child.processId();
+  ASSERT_TRUE(waitForChildExec(pid));
+
+  QSignalSpy hintSpy(service.get(), &GameDetectionService::undiscoveredGameSeen);
+  QSignalSpy detectSpy(service.get(), &GameDetectionService::gameDetected);
+  WindowInfo w;
+  w.id = 6101;
+  w.appId = "mystery-game";
+  w.title = "Mystery Game";
+  w.pid = pid;
+  w.focused = true;
+  w.fullscreen = true;
+  monitor.ingestSnapshot({w});
+  pump(300);
+
+  child.kill();
+  child.waitForFinished(5000);
+
+  ASSERT_EQ(hintSpy.count(), 1);
+  EXPECT_EQ(hintSpy.at(0).at(0).toString(), QString("mystery-game"));
+  EXPECT_EQ(hintSpy.at(0).at(1).toString(), QString("Mystery Game"));
+  EXPECT_EQ(detectSpy.count(), 0);
+  EXPECT_TRUE(service->currentGameName().isEmpty());
+}
+
+TEST_F(GameDetectionServiceTest, HintNotOfferedForKnownNonGameApp) {
+  // An installed application is never a hint: the desktop entry says what
+  // it is (a player, browser, …), so fullscreen video stays silent.
+  setHintSpacing(0);
+  DesktopEntryFixture entries;
+  ASSERT_TRUE(entries.valid);
+  ASSERT_TRUE(entries.write("mystery-game", "mpv", "AudioVideo;Video;Player;"));
+
+  QProcess child;
+  child.start("sleep", {"30"});
+  ASSERT_TRUE(child.waitForStarted(5000));
+  const qint64 pid = child.processId();
+  ASSERT_TRUE(waitForChildExec(pid));
+
+  QSignalSpy hintSpy(service.get(), &GameDetectionService::undiscoveredGameSeen);
+  WindowInfo w;
+  w.id = 6102;
+  w.appId = "mystery-game";
+  w.title = "Some Video";
+  w.pid = pid;
+  w.focused = true;
+  w.fullscreen = true;
+  monitor.ingestSnapshot({w});
+  pump(300);
+
+  child.kill();
+  child.waitForFinished(5000);
+  EXPECT_EQ(hintSpy.count(), 0);
+}
+
+TEST_F(GameDetectionServiceTest, HintRequiresFocusedFullscreenWindow) {
+  setHintSpacing(0);
+  QProcess child;
+  child.start("sleep", {"30"});
+  ASSERT_TRUE(child.waitForStarted(5000));
+  const qint64 pid = child.processId();
+  ASSERT_TRUE(waitForChildExec(pid));
+
+  QSignalSpy hintSpy(service.get(), &GameDetectionService::undiscoveredGameSeen);
+  WindowInfo windowed;
+  windowed.id = 6103;
+  windowed.appId = "mystery-game";
+  windowed.title = "Mystery Game";
+  windowed.pid = pid;
+  windowed.focused = true;
+  windowed.width = 800;
+  windowed.height = 600;
+  windowed.outputWidth = 1920;
+  windowed.outputHeight = 1080;
+  monitor.ingestSnapshot({windowed});
+  pump(200);
+  EXPECT_EQ(hintSpy.count(), 0);
+
+  WindowInfo unfocused = windowed;
+  unfocused.id = 6104;
+  unfocused.focused = false;
+  unfocused.fullscreen = true;
+  monitor.ingestSnapshot({unfocused});
+  pump(200);
+  EXPECT_EQ(hintSpy.count(), 0);
+
+  child.kill();
+  child.waitForFinished(5000);
+}
+
+TEST_F(GameDetectionServiceTest, HintIsRateLimitedPerLaunch) {
+  // A handful per launch, never a notification per window snapshot.
+  setHintSpacing(0);
+  QProcess child;
+  child.start("sleep", {"30"});
+  ASSERT_TRUE(child.waitForStarted(5000));
+  const qint64 pid = child.processId();
+  ASSERT_TRUE(waitForChildExec(pid));
+
+  QSignalSpy hintSpy(service.get(), &GameDetectionService::undiscoveredGameSeen);
+  for (int i = 0; i < 5; ++i) {
+    WindowInfo w;
+    w.id = 6200 + i;
+    w.appId = QStringLiteral("mystery-game-%1").arg(i);
+    w.title = QStringLiteral("Mystery Game %1").arg(i);
+    w.pid = pid;
+    w.focused = true;
+    w.fullscreen = true;
+    monitor.ingestSnapshot({w});
+    pump(60);
+  }
+
+  child.kill();
+  child.waitForFinished(5000);
+  EXPECT_EQ(hintSpy.count(), 3); // m_hintMax
 }
 
 TEST_F(GameDetectionServiceTest, SteamAppIdFromAppIdParses) {
