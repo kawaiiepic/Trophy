@@ -1094,6 +1094,12 @@ void Application::connectSignals() {
               m_notificationService->closeLastNotification();
               return;
             }
+            // Discovery hint is resident: a bare close retires its pending
+            // window/title so a later "default" click cannot reopen it.
+            if (action == QStringLiteral("hint-dismissed")) {
+              handleDiscoveryHintAction(action);
+              return;
+            }
             // Discovery hint: "Add to Games" opens the Games page with the
             // Add Game dialog prefilled; "Block" vetoes the app so the offer
             // never repeats. Body clicks arrive as "default" on daemons that
@@ -2119,6 +2125,10 @@ void Application::handleDiscoveryHintAction(const QString &action) {
   const QString title = m_discoveryHintTitle;
   m_discoveryHintAppId.clear();
   m_discoveryHintTitle.clear();
+  // Dismissal: the resident notice is already gone, and closing again would
+  // arm a withdraw for a later notice with the same title.
+  if (action == QStringLiteral("hint-dismissed"))
+    return;
   if (m_notificationService)
     m_notificationService->closeLastNotification();
   if (appId.isEmpty() && title.isEmpty())

@@ -135,15 +135,15 @@ void NotificationService::showDiscoveryHint(const QString &appId,
   // Critical urgency: the offer usually fires for a game that is already
   // fullscreen, and Plasma's fullscreen "do not disturb" swallows normal
   // notices (live 2026-11-15: Dawn Chorus was offered, nothing appeared).
-  // The service still withdraws it after the timeout, so it never lingers
-  // over the game.
+  // timeout 0 = resident, like the "New Game" prompt: a suggestion that
+  // auto-hides while you are playing is a suggestion nobody answers.
   sendNotification(
       QStringLiteral("Suspected game"),
       QStringLiteral("\"%1\" looks like a game. Add it so Trophy can record it "
                      "automatically and label its audio, or Block it if it is "
                      "not a game.")
           .arg(name),
-      "trophy", 8000, 2, false, true, QStringLiteral("add-game"),
+      "trophy", 0, 2, false, true, QStringLiteral("add-game"),
       QStringLiteral("Add to Games"), QStringLiteral("block-app"),
       QStringLiteral("Block"));
 }
@@ -397,10 +397,16 @@ void NotificationService::onNotificationClosed(uint id, uint reason) {
   // stray close can't arm anything unexpected).
   const bool isAuthorize =
       m_lastTitle.startsWith(QStringLiteral("New Game: "));
+  // The discovery hint is resident; dismissing it must also retire the
+  // pending window/title so a later "default" click cannot reopen it.
+  const bool isDiscoveryHint =
+      m_lastTitle == QStringLiteral("Suspected game");
   if (id == m_lastNotificationId && m_lastNotificationId != 0) {
     m_lastNotificationId = 0;
     if (isAuthorize)
       emit notificationClicked(QStringLiteral("dismissed"));
+    else if (isDiscoveryHint)
+      emit notificationClicked(QStringLiteral("hint-dismissed"));
   }
 }
 

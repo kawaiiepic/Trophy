@@ -405,6 +405,15 @@ TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintBlockVetoesTheApp) {
   EXPECT_TRUE(discoveryHintCleared());
 }
 
+TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintDismissClearsTheOffer) {
+  setDiscoveryHint("mystery-app", "Mystery App");
+  QSignalSpy pageSpy(&app, &Application::gamesPageRequested);
+  app.handleDiscoveryHintAction("hint-dismissed");
+  EXPECT_TRUE(discoveryHintCleared());
+  EXPECT_TRUE(app.pendingAddGameQuery().isEmpty());
+  EXPECT_EQ(pageSpy.count(), 0);
+}
+
 TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintAddRequestsTheGamesPage) {
   setDiscoveryHint("mystery-app", "Mystery App");
   QSignalSpy pageSpy(&app, &Application::gamesPageRequested);
