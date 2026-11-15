@@ -46,6 +46,8 @@ protected:
     app.m_pendingCaptureKey.clear();
     app.m_windowWaitTimer = new QTimer(&app);
     app.m_audioWaitTimer = new QTimer(&app);
+    app.m_authorizePromptWaitTimer = new QTimer(&app);
+    app.m_authorizePromptWaitTimer->setSingleShot(true);
     // The deferred-prompt re-check re-arms this timer, exactly as the
     // initialized app's 3s debounce does.
     app.m_detectionDebounceTimer = new QTimer(&app);
@@ -67,6 +69,8 @@ protected:
     app.m_authorizePromptWaitingFor.clear();
     delete app.m_windowWaitTimer;
     app.m_windowWaitTimer = nullptr;
+    delete app.m_authorizePromptWaitTimer;
+    app.m_authorizePromptWaitTimer = nullptr;
     delete app.m_audioWaitTimer;
     app.m_audioWaitTimer = nullptr;
     app.m_settingsManager.reset();
@@ -121,6 +125,10 @@ protected:
   bool windowIsRecord() const { return app.m_pendingWindowIsRecord; }
   bool audioPendingEmpty() const { return app.m_pendingAudioGame.isEmpty(); }
   void fireDebounce() { app.onAuthorizeDebounceFired(); }
+  void firePromptWaitTimeout() { app.onAuthorizePromptWaitTimeout(); }
+  bool promptWaitPending() const {
+    return !app.m_authorizePromptWaitingFor.isEmpty();
+  }
   bool debounceActive() const { return app.m_detectionDebounceTimer->isActive(); }
   void fireWindowTimeout() { app.onWindowWaitTimeout(); }
   void authorize(const QString &game) { app.authorizeGame(game); }
@@ -406,4 +414,17 @@ TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintAddRequestsTheGamesPage) {
   EXPECT_TRUE(discoveryHintCleared());
   app.clearPendingAddGameQuery();
   EXPECT_TRUE(app.pendingAddGameQuery().isEmpty());
+}
+
+TEST_F(ApplicationAuthorizePromptTest, AuthorizePromptWaitGivesUpWithoutAWindow) {
+  // A process that never publishes a window (VRCX in the tray, 2026-11-15)
+  // must not keep re-arming the authorize prompt forever.
+  setCurrent("Never Shows Up");
+  armRecordPending("Never Shows Up");
+  fireDebounce();
+  EXPECT_FALSE(recordPendingEmpty());
+  EXPECT_TRUE(promptWaitPending());
+  firePromptWaitTimeout();
+  EXPECT_TRUE(recordPendingEmpty());
+  EXPECT_FALSE(promptWaitPending());
 }

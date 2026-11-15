@@ -88,6 +88,16 @@ void readDesktopEntry(const QString &path, GameIdentity::DesktopEntryInfo *info)
   info->found = true;
   info->path = path;
   bool inEntry = false;
+  bool hasGame = false;
+  bool nonGamePurpose = false;
+  // Third-party desktop files put Game on non-games: VRCX (a VRChat
+  // companion) ships Categories=Network;Chat;Game; and would otherwise be
+  // recorded. A game genre category never coexists with these.
+  static const QSet<QString> nonGameCategories{
+      QStringLiteral("Chat"),        QStringLiteral("Development"),
+      QStringLiteral("Office"),      QStringLiteral("Utility"),
+      QStringLiteral("System"),      QStringLiteral("Settings"),
+      QStringLiteral("WebBrowser")};
   for (const QByteArray &raw : data.split('\n')) {
     const QByteArray line = raw.trimmed();
     if (line.startsWith('[')) {
@@ -103,9 +113,13 @@ void readDesktopEntry(const QString &path, GameIdentity::DesktopEntryInfo *info)
     else if (line.startsWith("Categories=")) {
       for (const QString &category :
            QString::fromUtf8(line.mid(11)).split(';', Qt::SkipEmptyParts)) {
-        if (category.trimmed() == QLatin1String("Game"))
-          info->isGame = true;
+        const QString trimmed = category.trimmed();
+        if (trimmed == QLatin1String("Game"))
+          hasGame = true;
+        else if (nonGameCategories.contains(trimmed))
+          nonGamePurpose = true;
       }
+      info->isGame = hasGame && !nonGamePurpose;
     }
   }
 }

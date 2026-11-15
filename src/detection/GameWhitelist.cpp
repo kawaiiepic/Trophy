@@ -48,6 +48,8 @@ QStringList GameWhitelist::defaultBlacklistEntries() {
       "signal",
       "element",
       "zoom",
+      // VRChat companion (its desktop entry claims Categories=...;Game;)
+      "vrcx",
       // Media
       "spotify",
       "vlc",

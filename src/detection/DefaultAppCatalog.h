@@ -42,6 +42,8 @@ inline const QList<DefaultAppInfo> &defaultAppCatalog() {
       {"signal", "signal-desktop", {"signal-desktop", "org.signal.signal"}, {"org.signal.Signal"}},
       {"element", "element", {"element-desktop", "im.riot.riot"}, {"element-desktop"}},
       {"zoom", "zoom", {"us.zoom.zoom"}, {"Zoom", "us.zoom.Zoom"}},
+      // VRChat companion app: its desktop entry claims Categories=...;Game;
+      {"vrcx", "generic-game", {}, {}},
       {"spotify", "spotify", {"com.spotify.client"}, {"spotify-client"}},
       {"vlc", "vlc", {"org.videolan.vlc"}, {}},
       {"mpv", "mpv", {"io.mpv.mpv"}, {}},

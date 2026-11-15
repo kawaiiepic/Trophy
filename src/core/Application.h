@@ -272,6 +272,8 @@ private:
   // Approved games keep waiting on snapshots after the initial timeout;
   // a picker only ever follows explicit user action.
   QTimer *m_windowWaitTimer = nullptr;
+  // Deadline for the window-gated authorize prompt (no re-arm forever).
+  QTimer *m_authorizePromptWaitTimer = nullptr;
   QString m_pendingWindowGame;
   QString m_pendingCaptureKey;
   bool m_pendingWindowIsRecord = false;
@@ -334,6 +336,7 @@ private:
   QString restoreTokenForGame(const QString &game) const;
   void onWindowWaitTimeout();
   void onAuthorizeDebounceFired();
+  void onAuthorizePromptWaitTimeout();
   friend class ApplicationAuthorizePromptTest;
   bool m_suppressNextStorageNotification = false;
   bool m_vulkanLayerRegistered = false;

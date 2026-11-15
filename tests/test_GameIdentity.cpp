@@ -192,6 +192,14 @@ TEST_F(GameIdentityTest, PlayerAndBrowserEntriesAreNotProvenance) {
   EXPECT_FALSE(GameIdentity::desktopEntryFor("firefox").isGame);
 }
 
+TEST_F(GameIdentityTest, GameCategoryAlongsideChatIsNotEvidence) {
+  // VRCX ships Categories=Network;Chat;Game; — a chat companion, not a game.
+  writeDesktopEntry(home1, "vrcx", "VRCX", "Network;Chat;Game;");
+  const auto info = GameIdentity::desktopEntryFor("vrcx");
+  ASSERT_TRUE(info.found);
+  EXPECT_FALSE(info.isGame);
+}
+
 TEST_F(GameIdentityTest, UnknownAppIdIsNotProvenance) {
   const auto info = GameIdentity::desktopEntryFor("com.example.Missing");
   EXPECT_FALSE(info.found);

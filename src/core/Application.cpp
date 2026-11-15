@@ -489,6 +489,15 @@ void Application::initializeServices() {
   m_windowWaitTimer->setSingleShot(true);
   m_windowWaitTimer->setInterval(kWindowWaitMs);
 
+  // A window-gated authorize prompt must not re-arm forever for a process
+  // that never shows a window (VRCX in the tray detected via its desktop
+  // entry, 2026-11-15). One deadline, then drop the request.
+  m_authorizePromptWaitTimer = new QTimer(this);
+  m_authorizePromptWaitTimer->setSingleShot(true);
+  m_authorizePromptWaitTimer->setInterval(kWindowWaitMs);
+  connect(m_authorizePromptWaitTimer, &QTimer::timeout, this,
+          &Application::onAuthorizePromptWaitTimeout);
+
   m_audioWaitTimer = new QTimer(this);
   m_audioWaitTimer->setSingleShot(false);
   m_audioWaitTimer->setInterval(kAudioWaitMs);
@@ -926,6 +935,8 @@ void Application::connectSignals() {
             if (m_authorizePromptWaitingFor == gameName) {
               m_authorizePromptWaitingFor.clear();
             }
+            if (m_authorizePromptWaitTimer)
+              m_authorizePromptWaitTimer->stop();
             m_authorizePromptTokenInvalid = false;
             if (m_pendingWindowGame == gameName) {
               m_pendingWindowGame.clear();
@@ -1112,6 +1123,8 @@ void Application::connectSignals() {
               m_pendingDvrGame.clear();
               m_authorizePromptWaitingFor.clear();
               m_authorizePromptTokenInvalid = false;
+              if (m_authorizePromptWaitTimer)
+                m_authorizePromptWaitTimer->stop();
               m_detectionDebounceTimer->stop();
               return;
             }
@@ -1528,6 +1541,9 @@ void Application::onAuthorizeDebounceFired() {
     qCInfo(appLog) << "Skipping authorize prompt for" << pending
                    << "(blocked or already approved)";
     m_authorizePromptTokenInvalid = false;
+    m_authorizePromptWaitingFor.clear();
+    if (m_authorizePromptWaitTimer)
+      m_authorizePromptWaitTimer->stop();
     if (m_pendingAutoRecordGame == pending)
       m_pendingAutoRecordGame.clear();
     if (m_pendingDvrGame == pending)
@@ -1552,11 +1568,17 @@ void Application::onAuthorizeDebounceFired() {
     // A compositor snapshot can stay unchanged for a long time (loading
     // game, static window list), so do not depend on another push to notice
     // the game window. This re-check is a snapshot scan — no portal or
-    // PipeWire round-trip — and stops as soon as the pending is retired.
+    // PipeWire round-trip — and stops as soon as the pending is retired or
+    // the deadline below fires (a process that never shows a window must
+    // not re-arm forever).
+    if (m_authorizePromptWaitTimer && !m_authorizePromptWaitTimer->isActive())
+      m_authorizePromptWaitTimer->start();
     m_detectionDebounceTimer->start();
     return;
   }
   m_authorizePromptWaitingFor.clear();
+  if (m_authorizePromptWaitTimer)
+    m_authorizePromptWaitTimer->stop();
   const bool tokenInvalid = std::exchange(m_authorizePromptTokenInvalid, false);
   if (tokenInvalid) {
     qCInfo(appLog) << "Showing authorize prompt for" << pending
@@ -1573,6 +1595,21 @@ void Application::onAuthorizeDebounceFired() {
       "New Game: " + pending,
       "Click to authorize Wayland capture for this game, or Block it.",
       "trophy", 0, 2, true);
+}
+
+void Application::onAuthorizePromptWaitTimeout() {
+  if (m_authorizePromptWaitingFor.isEmpty())
+    return;
+  const QString pending = std::exchange(m_authorizePromptWaitingFor, QString());
+  qCInfo(appLog) << "No game window appeared for" << pending
+                 << "- dropping the authorize request";
+  if (m_pendingAutoRecordGame == pending)
+    m_pendingAutoRecordGame.clear();
+  if (m_pendingDvrGame == pending)
+    m_pendingDvrGame.clear();
+  m_authorizePromptTokenInvalid = false;
+  if (m_detectionDebounceTimer)
+    m_detectionDebounceTimer->stop();
 }
 
 bool Application::shouldShowAuthorizePrompt(const QString &game) const {

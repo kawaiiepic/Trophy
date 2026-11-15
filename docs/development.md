@@ -41,12 +41,15 @@ compositor API:
   chain of `/proc/<pid>/stat` reads for one window's PID, never a scan.
 - **Desktop entries** — `GameIdentity::desktopEntryFor()` maps a compositor
   app id / WM_CLASS to its installed `.desktop` file and accepts it only when
-  `Categories` contains `Game`. The app id may be the desktop id
-  (`mpv`), the desktop file name itself (`ai.opencode.desktop` →
-  `ai.opencode.desktop.desktop`), or a `StartupWMClass` declared by an entry.
-  Players, browsers and other apps publish non-Game categories, so fullscreen
-  video stays out. Flatpak apps count only through their exported desktop
-  entry, not from the sandbox id alone.
+  `Categories` contains `Game` *and* no communication/productivity category
+  (Chat, Development, Office, Utility, System, Settings, WebBrowser): VRCX
+  ships `Categories=Network;Chat;Game;` and is not a game. The app id may be
+  the desktop id (`mpv`), the desktop file name itself
+  (`ai.opencode.desktop` → `ai.opencode.desktop.desktop`), or a
+  `StartupWMClass` declared by an entry. Players, browsers and other apps
+  publish non-Game categories, so fullscreen video stays out. Flatpak apps
+  count only through their exported desktop entry, not from the sandbox id
+  alone.
 - **Window context** — `WaylandWindowMonitor` still supplies focus,
   fullscreen/coverage, geometry and the window picker. It is optional
   enrichment for detection, not the source of identity.
