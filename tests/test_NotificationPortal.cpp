@@ -243,6 +243,9 @@ TEST_F(NotificationPortalTest, DiscoveryHintNamesTheAppAndOffersAddAndBlock) {
             (QStringList{"add-game", "Add to Games", "block-app", "Block",
                          "default", ""}));
   EXPECT_FALSE(qdbus_cast<QVariantMap>(notice[6]).value("resident").toBool());
+  // Critical: the offer usually fires while a game is fullscreen, where
+  // Plasma suppresses normal-urgency notices.
+  EXPECT_EQ(qdbus_cast<QVariantMap>(notice[6]).value("urgency").value<uchar>(), 2);
   EXPECT_EQ(notice[7].toInt(), 8000);
 }
 

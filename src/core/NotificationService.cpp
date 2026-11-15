@@ -132,13 +132,18 @@ void NotificationService::showNotification(const QString &title,
 void NotificationService::showDiscoveryHint(const QString &appId,
                                             const QString &title) {
   const QString name = title.isEmpty() ? appId : title;
+  // Critical urgency: the offer usually fires for a game that is already
+  // fullscreen, and Plasma's fullscreen "do not disturb" swallows normal
+  // notices (live 2026-11-15: Dawn Chorus was offered, nothing appeared).
+  // The service still withdraws it after the timeout, so it never lingers
+  // over the game.
   sendNotification(
       QStringLiteral("Suspected game"),
       QStringLiteral("\"%1\" looks like a game. Add it so Trophy can record it "
                      "automatically and label its audio, or Block it if it is "
                      "not a game.")
           .arg(name),
-      "trophy", 8000, 1, false, true, QStringLiteral("add-game"),
+      "trophy", 8000, 2, false, true, QStringLiteral("add-game"),
       QStringLiteral("Add to Games"), QStringLiteral("block-app"),
       QStringLiteral("Block"));
 }
