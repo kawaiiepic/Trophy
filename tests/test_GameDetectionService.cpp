@@ -106,6 +106,11 @@ protected:
   // redirected below: the ctor loads whitelist/blacklist from disk, and
   // member-init order would otherwise read the user's real config.
   std::unique_ptr<GameDetectionService> service;
+  // One real (but harmless) process stands in for "a running game" in the
+  // reconcile fixtures. It cannot be the test process itself: detection
+  // deliberately ignores Trophy's own PID.
+  QProcess fakeGameProcess;
+  qint64 fakeGamePid() const { return fakeGameProcess.processId(); }
 
   void SetUp() override {
     ASSERT_TRUE(configHome.isValid());
@@ -124,9 +129,16 @@ protected:
     service = std::make_unique<GameDetectionService>();
     service->setWindowMonitor(&monitor);
     service->start();
+    fakeGameProcess.start("sleep", {"120"});
+    ASSERT_TRUE(fakeGameProcess.waitForStarted(5000));
+    ASSERT_TRUE(waitForChildExec(fakeGamePid()));
   }
 
   void TearDown() override {
+    if (fakeGameProcess.state() != QProcess::NotRunning) {
+      fakeGameProcess.kill();
+      fakeGameProcess.waitForFinished(5000);
+    }
     if (!service)
       return;
     service->stop();
@@ -611,7 +623,7 @@ TEST_F(GameDetectionServiceTest, BlockingIdentityRetiresAllItsProcesses) {
 }
 
 TEST_F(GameDetectionServiceTest, GenericNativeSocketReportResolvesBeforeDefaultVeto) {
-  const qint64 pid = QCoreApplication::applicationPid();
+  const qint64 pid = fakeGamePid();
   ASSERT_EQ(GameDetectionService::steamAppIdForPid(pid), 0u);
   // No Steam or whitelist evidence: native executable identity is not
   // proof of a game, so it still needs the focused/fullscreen gate.
@@ -832,12 +844,12 @@ TEST_F(GameDetectionServiceTest, UnknownGeometryStillNeedsFlag) {
 
 // --- Startup reconciliation (already-running games) ---
 
-static QList<WindowInfo> runningGameSnapshot() {
+static QList<WindowInfo> runningGameSnapshot(qint64 pid) {
   WindowInfo w;
   w.id = 4242;
   w.appId = "reconciled-game";
   w.title = "Reconciled Game";
-  w.pid = QCoreApplication::applicationPid(); // real PID: exe is NOT steam
+  w.pid = pid; // real PID: exe is NOT steam
   w.focused = true;
   w.fullscreen = true;
   return {w};
@@ -848,19 +860,19 @@ TEST_F(GameDetectionServiceTest, ReconcileFindsWhitelistedRunningGame) {
   QSignalSpy spy(service.get(), &GameDetectionService::gameDetected);
 
   // No socket traffic at all: the game predates Trophy.
-  monitor.ingestSnapshot(runningGameSnapshot());
+  monitor.ingestSnapshot(runningGameSnapshot(fakeGamePid()));
   pump(300);
 
   ASSERT_EQ(spy.count(), 1);
   EXPECT_EQ(service->currentGameName(), "Reconciled Game");
-  EXPECT_EQ(service->currentGamePid(), QCoreApplication::applicationPid());
+  EXPECT_EQ(service->currentGamePid(), fakeGamePid());
 }
 
 TEST_F(GameDetectionServiceTest, ReconcileIgnoresUnlistedRunningGame) {
   QSignalSpy spy(service.get(), &GameDetectionService::gameDetected);
 
   // Focused + fullscreen, but nothing links it to a game: no guess.
-  monitor.ingestSnapshot(runningGameSnapshot());
+  monitor.ingestSnapshot(runningGameSnapshot(fakeGamePid()));
   pump(300);
 
   EXPECT_EQ(spy.count(), 0);
@@ -871,12 +883,12 @@ TEST_F(GameDetectionServiceTest, ReconcileRunsOnceAutomatically) {
   service->addToWhitelist("reconciled-game", "Reconciled Game");
   QSignalSpy spy(service.get(), &GameDetectionService::gameDetected);
 
-  monitor.ingestSnapshot(runningGameSnapshot());
+  monitor.ingestSnapshot(runningGameSnapshot(fakeGamePid()));
   pump(300);
   ASSERT_EQ(spy.count(), 1);
 
   // Second snapshot must not re-emit for the same game.
-  monitor.ingestSnapshot(runningGameSnapshot());
+  monitor.ingestSnapshot(runningGameSnapshot(fakeGamePid()));
   pump(300);
   EXPECT_EQ(spy.count(), 1);
 }
@@ -892,7 +904,7 @@ TEST_F(GameDetectionServiceTest, ReconcileRetriesAfterEmptySnapshot) {
   pump(300);
   EXPECT_EQ(spy.count(), 0);
 
-  monitor.ingestSnapshot(runningGameSnapshot());
+  monitor.ingestSnapshot(runningGameSnapshot(fakeGamePid()));
   pump(300);
   ASSERT_EQ(spy.count(), 1);
   EXPECT_EQ(service->currentGameName(), "Reconciled Game");
@@ -904,14 +916,14 @@ TEST_F(GameDetectionServiceTest, ReconcileRetriesWhenUnfocused) {
   service->addToWhitelist("reconciled-game", "Reconciled Game");
   QSignalSpy spy(service.get(), &GameDetectionService::gameDetected);
 
-  auto backgrounded = runningGameSnapshot();
+  auto backgrounded = runningGameSnapshot(fakeGamePid());
   backgrounded[0].focused = false;
   backgrounded[0].fullscreen = false;
   monitor.ingestSnapshot(backgrounded);
   pump(300);
   EXPECT_EQ(spy.count(), 0);
 
-  monitor.ingestSnapshot(runningGameSnapshot());
+  monitor.ingestSnapshot(runningGameSnapshot(fakeGamePid()));
   pump(300);
   ASSERT_EQ(spy.count(), 1);
   EXPECT_EQ(service->currentGameName(), "Reconciled Game");
@@ -2184,6 +2196,34 @@ TEST_F(GameDetectionServiceTest, PageCallsResolveAgainstServiceApi) {
                 "on GameDetectionService")
             .arg(name));
   }
+}
+
+} // namespace TrophyBackend
+
+namespace TrophyBackend {
+
+TEST_F(GameDetectionServiceTest, NeverDetectsTrophysOwnWindow) {
+  // Trophy's own desktop entry is not a game (the installed one used to say
+  // Categories=Game, which detected and authorize-prompted Trophy itself on
+  // 2026-11-15). The own-PID guard must hold even when the entry claims it.
+  DesktopEntryFixture entries;
+  ASSERT_TRUE(entries.valid);
+  ASSERT_TRUE(entries.write("io.github.stevenjwheeler.Trophy", "Trophy",
+                            "AudioVideo;Video;Game;"));
+  QSignalSpy detectSpy(service.get(), &GameDetectionService::gameDetected);
+  QSignalSpy hintSpy(service.get(), &GameDetectionService::undiscoveredGameSeen);
+  WindowInfo w;
+  w.id = 7001;
+  w.appId = "io.github.stevenjwheeler.Trophy";
+  w.title = "Trophy";
+  w.pid = QCoreApplication::applicationPid();
+  w.focused = true;
+  w.fullscreen = true;
+  monitor.ingestSnapshot({w});
+  pump(200);
+  EXPECT_EQ(detectSpy.count(), 0);
+  EXPECT_EQ(hintSpy.count(), 0);
+  EXPECT_TRUE(service->currentGameName().isEmpty());
 }
 
 } // namespace TrophyBackend

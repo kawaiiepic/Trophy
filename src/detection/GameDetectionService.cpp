@@ -167,7 +167,9 @@ void GameDetectionService::setStreamWatcher(PipeWireStreamWatcher *watcher) {
 }
 
 void GameDetectionService::onAudioStreamAppeared(const AudioStreamInfo &stream) {
-  if (stream.pid <= 0 || m_pidToGameName.contains(stream.pid))
+  if (stream.pid <= 0 ||
+      stream.pid == QCoreApplication::applicationPid() ||
+      m_pidToGameName.contains(stream.pid))
     return;
   const QString reporter =
       stream.binary.isEmpty() ? stream.name : stream.binary;
@@ -534,6 +536,12 @@ void GameDetectionService::reconcileRunningGames() {
             });
 
   for (const WindowInfo &w : windows) {
+    // Never our own process. Trophy's own window has a desktop entry and a
+    // graphics context, so the evidence providers can legitimately match it
+    // — but recording Trophy itself is never the goal, and doing so looped
+    // an authorize prompt on 2026-11-15.
+    if (w.pid <= 0 || w.pid == QCoreApplication::applicationPid())
+      continue;
     if (w.minimized || (!w.focused && !w.fullscreen))
       continue;
     QString name = w.appId;
@@ -631,6 +639,13 @@ void GameDetectionService::onSocketReadyRead() {
     }
 
     if (command == "START") {
+      // A reporter inside Trophy itself (layers/preloads load into any
+      // process with a graphics context) must never become a game.
+      if (pid == QCoreApplication::applicationPid()) {
+        qWarning() << "Ignoring reporter START for Trophy's own process"
+                   << "(PID:" << pid << ")";
+        continue;
+      }
       // A reporter connection belongs to one process. Do not strand old
       // per-PID state if malformed traffic changes its claimed identity.
       if (m_activeConnections.contains(socket) &&
