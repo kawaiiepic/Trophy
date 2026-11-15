@@ -131,21 +131,18 @@ Trophy includes window-monitor integrations for KDE/KWin, GNOME, Hyprland, and S
 1. Complete the setup wizard, choosing your recording location, video, and audio settings.
 2. With an AppImage, Trophy registers its menu entry automatically on first launch, before it talks to the portal, so capture approvals and shortcuts belong to Trophy from the start. Nothing to confirm; **Settings → Desktop Integration** shows the entry and can remove it. Installing through an AppImage manager such as Gear Lever works too — Trophy keeps its own entry for the stable identity and hides it from menus so you are not offered a duplicate.
 3. Explicitly install the required window helper when prompted. Ordinary startup does not install or enable compositor integrations.
-4. Choose whether to enable optional game-detection reporters. Read the cautions below first.
-5. Assign recording and clip/bookmark shortcuts. KDE Plasma and GNOME show the portal approval dialog; if your backend does not support portal shortcuts, bind the commands described under [Keyboard shortcuts](#keyboard-shortcuts) natively.
-6. Start a game and authorize its capture when prompted. Saved approvals can restore capture on later sessions; stale approvals may need authorization again.
+4. Assign recording and clip/bookmark shortcuts. KDE Plasma and GNOME show the portal approval dialog; if your backend does not support portal shortcuts, bind the commands described under [Keyboard shortcuts](#keyboard-shortcuts) natively.
+5. Start a game and authorize its capture when prompted. Saved approvals can restore capture on later sessions; stale approvals may need authorization again.
 
 Manual recording is also available. When no game is tracked, the Record action opens the system capture picker. When a game is tracked, it targets that game.
 
 ## Game detection
 
-Trophy combines optional Vulkan reporter events with game identity and window context. Detection is conservative: not every launcher, graphics API, or runtime is covered. Use the Games page to manage recognition and blocking rules.
+Trophy combines game identity with compositor window context. Detection is conservative: not every launcher, graphics API, or runtime is covered. Use the Games page to manage recognition and blocking rules.
 
-Both reporters are opt-in. **Neither is certified compatible with anti-cheat systems.** Leave them disabled for protected games unless the game's policy permits them. Trophy does not bypass anti-cheat software.
+Trophy loads **no library into games**: Steam identity from the process environment/library, a recognised games-only launcher in the process ancestry, or an installed desktop entry with `Categories=Game` (and no communication/productivity category) is evidence, and the focused window then confirms it. Detection therefore cannot conflict with anti-cheat software.
 
-OpenGL games do not need a reporter: Steam identity from the process environment/library plus a focused window is enough. A non-Steam OpenGL game is recognized when you add it to the Games page; Trophy does not load a preload library into unrelated applications. When it sees a window it cannot identify, Trophy shows a **Suspected game** notice: add it to the Games page, or block it so it is never offered again. It never records it on its own. Host/Steam-runtime and 32-bit reporter compatibility are not universally established.
-
-See [reporter scope and packaging cautions](../packaging/README.md#reporter-scope-and-anti-cheat-caution) for more detail.
+A non-Steam game with no such evidence is recognized when you add it to the Games page. When Trophy sees a window it cannot identify, it shows a **Suspected game** notice: add it to the Games page, or block it so it is never offered again. It never records it on its own.
 
 ### KDE Plasma / KWin window helper
 

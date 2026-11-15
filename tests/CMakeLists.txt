@@ -95,8 +95,6 @@ if(Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_AppImageSmoke.py")
     add_test(NAME NativePackageSmokeTest.Harness
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_NativePackageSmoke.py")
-    add_test(NAME ReporterRuntimeTest.Harness
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_ReporterRuntimes.py")
     add_test(NAME NativeInstallSafetyTest.Harness
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_NativeInstallSafety.py")
     add_test(NAME DraftReleaseTest.Harness
@@ -105,8 +103,6 @@ if(Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_AppRun.py")
     add_test(NAME AppDirPruneTest.Harness
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_PruneAppDir.py")
-    add_test(NAME ReporterAbiTest.StaticFixtures
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_ReporterAbi.py")
 endif()
 
 add_executable(test_PlayerProbe test_PlayerProbe.cpp)
@@ -424,6 +420,12 @@ add_executable(test_LegacyGlShimCleanup test_LegacyGlShimCleanup.cpp
 target_include_directories(test_LegacyGlShimCleanup PRIVATE ${TEST_INCLUDE_DIRS})
 target_link_libraries(test_LegacyGlShimCleanup PRIVATE ${TEST_LINK_LIBS})
 gtest_discover_tests(test_LegacyGlShimCleanup)
+
+add_executable(test_LegacyVulkanLayerCleanup test_LegacyVulkanLayerCleanup.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/LegacyVulkanLayerCleanup.cpp)
+target_include_directories(test_LegacyVulkanLayerCleanup PRIVATE ${TEST_INCLUDE_DIRS})
+target_link_libraries(test_LegacyVulkanLayerCleanup PRIVATE ${TEST_LINK_LIBS})
+gtest_discover_tests(test_LegacyVulkanLayerCleanup)
 
 add_executable(test_ToplevelModel test_ToplevelModel.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/ToplevelModel.cpp)
@@ -955,30 +957,6 @@ target_include_directories(test_RuntimeLibraries PRIVATE ${TEST_INCLUDE_DIRS})
 target_link_libraries(test_RuntimeLibraries PRIVATE ${TEST_LINK_LIBS})
 gtest_discover_tests(test_RuntimeLibraries)
 
-# --- VulkanLayer (structural manifest writer; hermetic via XDG_DATA_HOME) ---
-add_executable(test_VulkanLayer test_VulkanLayer.cpp
-    ${CMAKE_SOURCE_DIR}/src/detection/VulkanLayer.cpp
-    ${CMAKE_SOURCE_DIR}/src/detection/VulkanLayer.h
-)
-target_include_directories(test_VulkanLayer PRIVATE ${TEST_INCLUDE_DIRS})
-target_link_libraries(test_VulkanLayer PRIVATE ${TEST_LINK_LIBS})
-gtest_discover_tests(test_VulkanLayer)
-
-# Real reporter export, exercised without creating a Vulkan instance.
-find_package(Threads REQUIRED)
-add_library(VulkanReporterNext SHARED VulkanReporterNext.cpp)
-target_include_directories(VulkanReporterNext PRIVATE ${Vulkan_INCLUDE_DIRS})
-target_link_libraries(VulkanReporterNext PRIVATE Threads::Threads)
-add_library(VulkanReporterFixture SHARED VulkanReporterFixture.cpp)
-target_include_directories(VulkanReporterFixture PRIVATE ${Vulkan_INCLUDE_DIRS})
-target_link_libraries(VulkanReporterFixture PRIVATE trophy_layer VulkanReporterNext)
-add_executable(test_VulkanReporter test_VulkanReporter.cpp)
-target_compile_definitions(test_VulkanReporter PRIVATE
-    TROPHY_LAYER_FILE="$<TARGET_FILE:trophy_layer>"
-    VULKAN_REPORTER_FIXTURE_FILE="$<TARGET_FILE:VulkanReporterFixture>")
-target_link_libraries(test_VulkanReporter PRIVATE ${TEST_LINK_LIBS} Vulkan::Vulkan dl)
-add_dependencies(test_VulkanReporter trophy_layer VulkanReporterFixture)
-gtest_discover_tests(test_VulkanReporter)
 
 # --- HardwareInfo (PCI mapping + gather smoke; degrades headless) ---
 add_executable(test_HardwareInfo test_HardwareInfo.cpp

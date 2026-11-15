@@ -37,7 +37,7 @@
 #include "detection/GameWhitelist.h"
 #include "detection/LegacyGlShimCleanup.h"
 #include "detection/PipeWireStreamWatcher.h"
-#include "detection/VulkanLayer.h"
+#include "detection/LegacyVulkanLayerCleanup.h"
 #include "detection/WaylandWindowMonitor.h"
 #include "encoding/EncoderFactory.h"
 #include "library/ActivityFeed.h"
@@ -161,10 +161,13 @@ bool Application::initialize() {
 
   QString configDir = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/trophy";
   QDir().mkpath(configDir);
-  // The OpenGL preload shim was retired. Remove any enrollment it left so a
-  // future login does not try to load a library that is no longer shipped.
+  // The OpenGL preload shim and the Vulkan detection layer were retired.
+  // Remove any enrollment they left so future sessions do not try to load
+  // libraries that are no longer shipped.
   if (!LegacyGlShimCleanup::removeOwnedEnrollment())
     qWarning() << "Could not remove the retired OpenGL shim enrollment";
+  if (!LegacyVulkanLayerCleanup::removeOwnedRegistration())
+    qWarning() << "Could not remove the retired Vulkan layer registration";
   QString logPath = configDir + "/trophy.log";
 
   // Open log file in append mode
@@ -273,14 +276,6 @@ bool Application::initialize() {
     ControlServer::sendCommand(QStringLiteral("show-window")); // best effort
     qCCritical(appLog) << "Another Trophy instance is running; exiting.";
     return false;
-  }
-  // The Vulkan layer is optional: only (re)register when enabled. A user
-  // who opted out keeps no layer JSON behind.
-  if (m_settingsManager->vulkanLayerEnabled()) {
-    m_vulkanLayerRegistered = ensureVulkanLayerRegistered();
-  } else {
-    removeVulkanLayerRegistration();
-    m_vulkanLayerRegistered = false;
   }
   emit detectionStatusChanged();
   registerQmlTypes();
@@ -2206,38 +2201,6 @@ void Application::syncAutostartFile() {
           QString::fromUtf8(qgetenv("APPIMAGE")))) {
     qCWarning(appLog) << "Failed to sync autostart entry";
   }
-}
-
-int Application::vulkanBundledHelperVersion() const {
-  return VulkanLayer::bundledHelperVersion();
-}
-
-int Application::vulkanHelperVersion() const {
-  return VulkanLayer::helperVersion();
-}
-
-bool Application::setVulkanLayerEnabled(bool enabled) {
-  m_settingsManager->setVulkanLayerEnabled(enabled);
-  bool ok;
-  if (enabled) {
-    m_vulkanLayerRegistered = ensureVulkanLayerRegistered(true);
-    ok = m_vulkanLayerRegistered;
-  } else {
-    ok = removeVulkanLayerRegistration();
-    m_vulkanLayerRegistered = false;
-  }
-  emit detectionStatusChanged();
-  return ok;
-}
-
-bool Application::removeVulkanLayerRegistration() {
-  // Opt-out removes our JSON so the loader stops loading the layer.
-  // Absence counts as success: nothing registered is the desired state.
-  return VulkanLayer::removeRegistration();
-}
-
-bool Application::ensureVulkanLayerRegistered(bool allow32BitMigration) {
-  return VulkanLayer::ensureRegistered(allow32BitMigration);
 }
 
 } // namespace TrophyBackend

@@ -356,7 +356,7 @@ Rectangle {
                         }
                     }
 
-                    /// Step 4: Required tracking and optional reporters
+                    /// Step 4: Required window tracking
                     ScrollView {
                         id: step4Scroll
                         ScrollBar.vertical: TrophyScrollBar {}
@@ -371,7 +371,7 @@ Rectangle {
                                 Layout.alignment: Qt.AlignHCenter
                                 spacing: 2
                                 Label { text: qsTr("Game Detection Setup"); Layout.alignment: Qt.AlignHCenter; font.pixelSize: Theme.fontSizeLarge; font.weight: Font.Bold; color: Theme.textColor }
-                                Label { text: qsTr("The Game Window Helper is required. Graphics detection helpers are optional."); Layout.alignment: Qt.AlignHCenter; font.pixelSize: Theme.fontSizeSmall; color: Theme.textSecondaryColor }
+                                Label { text: qsTr("The Game Window Helper is required."); Layout.alignment: Qt.AlignHCenter; font.pixelSize: Theme.fontSizeSmall; color: Theme.textSecondaryColor }
                             }
                             // Module 1: window tracking (KWin script on KDE)
                             Rectangle {
@@ -390,7 +390,7 @@ Rectangle {
                                     RowLayout {
                                         Layout.fillWidth: true
                                         spacing: Theme.spacingMedium
-                                        Label { text: qsTr("1. Game Window Helper — %1").arg(windowMonitor ? windowMonitor.compositorName : qsTr("unknown compositor")); font.weight: Font.Bold; color: Theme.textColor; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        Label { text: qsTr("Game Window Helper — %1").arg(windowMonitor ? windowMonitor.compositorName : qsTr("unknown compositor")); font.weight: Font.Bold; color: Theme.textColor; Layout.fillWidth: true; elide: Text.ElideRight }
                                         Label { text: windowMonitor && windowMonitor.trackingReady ? qsTr("Working") : (windowMonitor && windowMonitor.trackingChecking ? qsTr("Checking…") : (windowMonitor && windowMonitor.compositorName === "gnome" && windowMonitor.gnomeHelperInstalled ? qsTr("Awaiting login") : qsTr("Needs attention"))); color: Theme.textColor; font.pixelSize: Theme.fontSizeSmall }
                                     }
                                     Label {
@@ -428,29 +428,6 @@ Rectangle {
                                     }
                                 }
                             }
-                            // Module 2: Vulkan detection layer
-                            Rectangle {
-                                Layout.alignment: Qt.AlignHCenter
-                                Layout.preferredWidth: 500
-                                implicitHeight: modVulkanCol.height + (Theme.spacingMedium * 2)
-                                color: Theme.withOpacity(Theme.textColor, 0.05)
-                                radius: Theme.radiusMedium
-                                border.color: Theme.borderColor
-                                ColumnLayout {
-                                    id: modVulkanCol
-                                    anchors.left: parent.left; anchors.right: parent.right; anchors.margins: Theme.spacingMedium; anchors.verticalCenter: parent.verticalCenter
-                                    spacing: Theme.spacingSmall
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: Theme.spacingMedium
-                                        Label { text: qsTr("2. Vulkan Detection"); font.weight: Font.Bold; color: Theme.textColor; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        Label { text: app && app.vulkanLayerRegistered ? qsTr("Enrolled") : qsTr("Not enrolled"); color: Theme.textColor; font.pixelSize: Theme.fontSizeSmall }
-                                        TrophySwitch { checked: settingsManager ? settingsManager.vulkanLayerEnabled : false; onToggled: if (settingsManager && app) { settingsManager.vulkanLayerEnabled = checked; app.setVulkanLayerEnabled(checked) } }
-                                    }
-                                    Label { text: qsTr("Notices games starting Vulkan graphics and notifies Trophy to start recording, including Proton titles."); font.pixelSize: Theme.fontSizeSmall; color: Theme.textSecondaryColor; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                                }
-                            }
-                            // Module 3: removed (OpenGL shim retired)
                             Item { Layout.fillHeight: true }
                         }
                     }

@@ -1205,9 +1205,9 @@ Page {
                     objectName: "detectionHelpersCard"
                     sectionTitle: qsTr("Detection Helpers")
                     iconSource: "qrc:/icons/puzzle.svg"
-                    description: qsTr("Integration status at a glance. Graphics helpers are optional.")
-                    readonly property real statusWidth: vulkanControls.badgeWidth
-                    readonly property real actionWidth: vulkanHelperSwitch.implicitWidth
+                    description: qsTr("Window tracking status at a glance.")
+                    readonly property real statusWidth: windowHelperControls.badgeWidth
+                    readonly property real actionWidth: helperRepair.implicitWidth
 
                     SettingRow {
                         label: qsTr("Game Window Helper (required)")
@@ -1259,36 +1259,6 @@ Page {
                         color: Theme.textSecondaryColor
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
-                    }
-
-                    SettingRow {
-                        label: qsTr("Vulkan Detection")
-                        help: qsTr("Notices games starting Vulkan graphics and notifies Trophy to start recording, including Proton titles.")
-                        showVersions: app !== null
-                        bundledVersion: app ? app.vulkanBundledHelperVersion : 0
-                        installedVersion: app ? app.vulkanHelperVersion : 0
-                        helperInstalled: app && app.vulkanLayerRegistered
-
-                        HelperControls {
-                            id: vulkanControls
-                            objectName: "vulkanHelperStatus"
-                            statusWidth: detectionHelpersCard.statusWidth
-                            actionWidth: detectionHelpersCard.actionWidth
-                            healthy: app && app.vulkanLayerRegistered
-                            text: healthy ? qsTr("Enrolled") : qsTr("Not enrolled")
-
-                            TrophySwitch {
-                                id: vulkanHelperSwitch
-                                anchors.right: parent.right
-                                checked: settingsManager ? settingsManager.vulkanLayerEnabled : false
-                                onToggled: {
-                                    if (settingsManager)
-                                        settingsManager.vulkanLayerEnabled = checked;
-                                    if (app)
-                                        app.setVulkanLayerEnabled(checked);
-                                }
-                            }
-                        }
                     }
 
                     Label {

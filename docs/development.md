@@ -10,24 +10,19 @@ affected helper when changing it:
 
 - KWin: `KPlugin.Version` in `resources/kwin/trophy-monitor/metadata.json`.
 - GNOME: `version` in `resources/gnome/metadata.json`.
-- Vulkan: the `TROPHY_HELPER_VERSION` data marker in
-  `src/vulkan_layer/trophy_layer.cpp`.
 
 These revisions are separate from the application version and do not change the
-frozen detection socket protocol. Settings reads installed script metadata and
-enrolled reporter files (or available reporters before enrollment), without
-loading the reporters. Unversioned/invalid files show **Version unknown** rather
-than inheriting the current app's revision. This identifies files, not a running
-game's mapped library or the code currently loaded by the compositor/login.
-Hyprland/Sway use compositor tools, so no Trophy script version is claimed.
+frozen detection socket protocol. Settings reads installed script metadata
+without loading it. Unversioned/invalid files show **Version unknown** rather
+than inheriting the current app's revision. This identifies files, not the code
+currently loaded by the compositor/login. Hyprland/Sway use compositor tools, so
+no Trophy script version is claimed.
 
 ## Detection data sources
 
 Detection is evidence-based and deliberately does not require any one
 compositor API:
 
-- **Reporter events** — the optional Vulkan layer reports `START:<pid>` (or the
-  historical name/app-id form) and Trophy resolves identity from `/proc`.
 - **PipeWire playback streams** — every audio node carries
   `application.process.id` and `application.process.binary`, giving a
   desktop-agnostic launch/PID signal. `PipeWireStreamWatcher` snapshots those
@@ -60,7 +55,7 @@ compositor API:
 
 The corresponding rule set is `DetectionPolicy`; new sources should feed it
 evidence instead of adding another ad-hoc confidence branch. Provenance
-(reporter, launcher ancestry, game desktop entry) only counts once the window
+(launcher ancestry, game desktop entry) only counts once the window
 is focused and capturable — fullscreen, or at least 64x64 so windowed games
 count; without provenance a window is never game evidence on its own.
 
@@ -79,7 +74,7 @@ skips anything detection already has evidence for.
 - CMake 3.21+, a C++20 compiler, and pkg-config.
 - Qt 6 development packages: Core, Gui, Qml, Quick, QuickControls2, Multimedia, DBus, Concurrent, Network, and Widgets.
 - FFmpeg development libraries: libavcodec, libavformat, libavutil, libswscale, and libswresample.
-- PipeWire development libraries and Vulkan loader/headers.
+- PipeWire development libraries.
 - Optional libva/libva-drm for VA-API, libdrm and EGL for DMA-BUF support, and GBM for related tests.
 - GoogleTest and Qt Test when building tests (enabled by default).
 
@@ -100,7 +95,7 @@ Arch/CachyOS:
 
 ```bash
 sudo pacman -S --needed base-devel cmake qt6-base qt6-declarative qt6-multimedia \
-    ffmpeg pipewire libva pkgconf vulkan-headers vulkan-icd-loader \
+    ffmpeg pipewire libva pkgconf \
     libdrm mesa gtest
 ```
 
@@ -109,7 +104,7 @@ Fedora (FFmpeg development package availability depends on enabled repositories)
 ```bash
 sudo dnf install gcc-c++ make cmake qt6-qtbase-devel qt6-qtdeclarative-devel \
     qt6-qtmultimedia-devel ffmpeg-devel pipewire-devel libva-devel \
-    vulkan-headers vulkan-loader-devel libdrm-devel mesa-libEGL-devel \
+    libdrm-devel mesa-libEGL-devel \
     mesa-libgbm-devel gtest-devel
 ```
 
@@ -119,7 +114,7 @@ Ubuntu/Debian:
 sudo apt install build-essential cmake pkg-config qt6-base-dev qt6-declarative-dev \
     qt6-multimedia-dev libavcodec-dev libavformat-dev libavutil-dev \
     libswscale-dev libswresample-dev libpipewire-0.3-dev libva-dev \
-    libvulkan-dev libgtest-dev libdrm-dev libegl-dev libgbm-dev
+    libgtest-dev libdrm-dev libegl-dev libgbm-dev
 ```
 
 ## Build and install
@@ -138,7 +133,7 @@ For read-only source snapshots (for example container package builds), configure
 with `-DQT_QML_GENERATE_QMLLS_INI=OFF` to disable source-tree IDE metadata writes.
 Normal developer builds keep generation enabled by default.
 
-The install includes `libTrophy.so`, reporter libraries, and desktop integration as well as the executable. **Do not copy only the binary.** Ensure `~/.local/bin` is on `PATH` for native CLI shortcuts. Reconfigure after changing branches/commits if you need the displayed configure-time version stamp refreshed.
+The install includes `libTrophy.so` and desktop integration as well as the executable. **Do not copy only the binary.** Ensure `~/.local/bin` is on `PATH` for native CLI shortcuts. Reconfigure after changing branches/commits if you need the displayed configure-time version stamp refreshed.
 
 Desktop and autostart entries use the reverse-DNS id
 `io.github.stevenjwheeler.Trophy.desktop`. Do not rename them back to
@@ -170,9 +165,9 @@ HOME="$test_root/home" \
     ctest --test-dir ../trophy-build --output-on-failure --timeout 300
 ```
 
-**Quit running Trophy instances before socket tests.** The reporter protocol uses the fixed `/tmp/trophy-detection.sock`; HOME/XDG isolation does not relocate it. Certain integration tests launch their own private D-Bus or PipeWire environment. Hardware and optional-codec tests skip when requirements are unavailable. Passing automated tests does not establish compatibility with every compositor, GPU, or game runtime.
+**Quit running Trophy instances before socket tests.** The detection socket uses the fixed `/tmp/trophy-detection.sock` (the shipped reporter producers were retired; the protocol remains for tests and future sources); HOME/XDG isolation does not relocate it. Certain integration tests launch their own private D-Bus or PipeWire environment. Hardware and optional-codec tests skip when requirements are unavailable. Passing automated tests does not establish compatibility with every compositor, GPU, or game runtime.
 
-For AppImage payload/startup smoke checks and reporter ABI inspection, see [packaging notes](../packaging/README.md). Those checks have narrower scope than live recording tests.
+For AppImage payload/startup smoke checks, see [packaging notes](../packaging/README.md). Those checks have narrower scope than live recording tests.
 
 Package harness regressions can run independently without a build or desktop:
 
@@ -231,7 +226,7 @@ ctest --test-dir ../trophy-build --output-on-failure --timeout 120 \
 - Native audio needs Python, `pipewire`, `wireplumber` 0.5+, `pw-cli`, `pw-dump`
   and `dbus-run-session`; it skips explicitly when these are unavailable. Use
   CTest/the provided launchers, not private-test environment markers on your
-  normal session bus. These suites alone do not use the reporter socket.
+  normal session bus. These suites alone do not use the detection socket.
 - `RecordingFailureTest` runs synthetic SHM video and a tone through the real
   private PipeWire graph, fake portal, recording/DVR managers and software
   H.264/AAC/MKV pipeline. Merged/separate cases cover portal closure, portal
@@ -282,38 +277,7 @@ pipeline. Real portal UI/permission-store behavior, GPU/DMA-BUF driver resets,
 additional native scheduling/format combinations and suspend/resume still need
 separate integration and hardware/session checks.
 
-### Reporter runtime automation
-
-`packaging/check_reporter_runtimes.py` records a host/explicit-sysroot ABI matrix.
-It checks both reporter and probe dependency closures before opt-in execution:
-
-```bash
-python3 packaging/check_reporter_runtimes.py \
-    /path/to/libtrophy_layer.so \
-    --runtime example=/path/to/materialized/sysroot \
-    --execute-trusted-fixtures --output /tmp/opencode/reporter-runtimes.json
-```
-
-Use only trusted reporter build outputs with the execution flag. The probes
-disable reporting, load/resolve/unload the library without graphics calls, and
-verify loaded objects against the checked provider paths. They never launch
-Steam, pressure-vessel, a game or a driver. Matching multilib compiler support is
-required for ELF32 probes; missing/incompatible providers prevent execution.
-Compatibility negatives are recorded in JSON, not treated as blanket game
-failures. Check per-runtime/per-reporter statuses, not just the tool's exit code.
-The standalone reporter CI jobs use `--require-host-pass` to require their
-matching host ABI and disabled-loader fixtures to pass and upload the matrix.
-This workflow wiring is not evidence of a remote CI execution.
-
-`packaging/materialize_reporter_runtime.py RUNTIME NEW_SCRATCH_DIRECTORY` can
-extract a bounded core-provider subset from an installed Steam content store.
-It checks mtree sizes/SHA256s and copies to a new directory without modifying
-Steam. Missing content stays missing; it never substitutes host libraries.
-This is not a full reconstructed runtime: absent graphics/other dependencies
-can still prevent closure checks. Partial stores and metadata alone do not
-establish runtime compatibility or actual Steam provider selection.
-
-### Diagnostic kit
+## Diagnostic kit
 
 `packaging/make_test_kit.py` stages a diagnostic kit from a build; it is not a
 release download. The kit does not bundle Qt or FFmpeg, so the target machine
@@ -329,7 +293,3 @@ collector, the kit, and how to read its report.
 Issues, focused pull requests, and documentation improvements are welcome. For fixes, include reproduction steps and a regression test where practical. Describe what you verified, and distinguish automated coverage from live desktop/game testing.
 
 The application uses Qt Quick/QML for the interface and C++20 for recording, audio, detection, and library services. Video capture stays PipeWire/portal-based; share export uses native FFmpeg libraries. Preserve user authorization, worker/input lifetimes, and the distinction between disposable caches and durable annotations when changing these paths.
-
-For Qt-free native/i386 reporter builds and their daemon-free fixture suites,
-see [standalone reporters](../reporters/README.md). These do not automatically
-enroll 32-bit helpers in the installed application's existing reporter settings.

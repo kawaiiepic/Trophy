@@ -372,7 +372,7 @@ ApplicationWindow {
             { name: "Notifications", section: "Notifications", keywords: ["notification", "notices", "alerts", "popup", "clips", "notify", "recording notices", "clip notices", "storage notices", "sound", "chime", "ping", "test", "update", "updates", "automatic checks"] },
             { name: "Discord Rich Presence", section: "Discord Rich Presence", keywords: ["discord", "rich presence", "activity", "profile", "privacy", "game names", "idle"] },
             { name: "Game Detection", section: "Game Detection", keywords: ["detection", "detect", "auto-detect", "auto-record", "auto", "record", "launch", "game"] },
-            { name: "Detection Helpers", section: "Detection Helpers", keywords: ["helpers", "integration", "status", "enrolled", "game window helper", "window tracking", "vulkan", "opengl", "shim", "repair"] },
+            { name: "Detection Helpers", section: "Detection Helpers", keywords: ["helpers", "integration", "status", "enrolled", "game window helper", "window tracking", "repair"] },
             { name: "System Tray", section: "System Tray", keywords: ["tray", "system tray", "minimize", "close", "start minimized", "login", "autostart", "background"] },
             { name: "Keyboard Shortcuts", section: "Keyboard Shortcuts", keywords: ["shortcut", "shortcuts", "global", "hotkey", "keys", "keybind", "record key", "clip key", "save clip", "configure", "bind", "remap"] }
         ];

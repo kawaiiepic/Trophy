@@ -14,10 +14,10 @@
 namespace TrophyBackend {
 
 /**
- * @brief Resolve who is behind a reporter event.
+ * @brief Resolve who is behind a detection event.
  *
  * Everything here is derived from the one PID named in a START event (or
- * the reporter-provided executable/argv). It never scans /proc: the only
+ * the supplied executable/argv). It never scans /proc: the only
  * cross-process reads are targeted /proc/<pid> lookups for that PID.
  *
  * Split out of GameDetectionService so the socket handler, the window

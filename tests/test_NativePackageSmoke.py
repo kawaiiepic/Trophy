@@ -31,7 +31,6 @@ class NativePackageSmokeTest(unittest.TestCase):
         self.libdir = libdir
         for relative in (
             "bin/trophy", f"{libdir}/libTrophy.so",
-            f"{libdir}/trophy/libtrophy_layer.so",
             "share/applications/io.github.stevenjwheeler.Trophy.desktop",
             "share/icons/hicolor/scalable/apps/trophy.svg",
             "share/trophy/kwin/trophy-monitor/metadata.json",
@@ -43,9 +42,6 @@ class NativePackageSmokeTest(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture")
             path.chmod(0o755 if relative.startswith(("bin/", "lib")) else 0o644)
-        path = self.prefix / "share/trophy/vulkan_layer/trophy_layer.json"
-        path.parent.mkdir(parents=True)
-        path.write_text(json.dumps({"layer": {"library_path": "/build/template.so"}}))
         path = self.prefix / "share/metainfo/io.github.stevenjwheeler.Trophy.metainfo.xml"
         path.parent.mkdir(parents=True)
         path.write_text('<component><launchable type="desktop-id">'
@@ -68,35 +64,6 @@ class NativePackageSmokeTest(unittest.TestCase):
         self.payload("lib/x86_64-linux-gnu")
         self.assertEqual(self.check(), self.prefix)
 
-    def companions(self):
-        directory = self.prefix / "lib/trophy/reporters32"
-        directory.mkdir(parents=True)
-        for name in ("libtrophy_layer.so",):
-            header = bytearray(20)
-            header[:7] = b"\x7fELF\x01\x01\x01"
-            header[16:20] = b"\x03\x00\x03\x00"
-            (directory / name).write_bytes(header)
-        return directory
-
-    def test_optional_i386_companions_are_checked(self):
-        self.payload()
-        self.companions()
-        self.assertEqual(self.check(), self.prefix)
-
-    def test_partial_i386_companions_are_not_a_complete_package(self):
-        self.payload()
-        directory = self.companions()
-        (directory / "libtrophy_layer.so").unlink()
-        with self.assertRaisesRegex(RuntimeError, "Payload missing"):
-            self.check()
-
-    def test_mislabeled_i386_companion_is_rejected(self):
-        self.payload()
-        directory = self.companions()
-        (directory / "libtrophy_layer.so").write_bytes(b"not an i386 shared object")
-        with self.assertRaisesRegex(RuntimeError, "i386 ET_DYN"):
-            self.check()
-
     def test_missing_payload_members(self):
         self.payload()
         files = [p for p in self.prefix.rglob("*") if p.is_file()]
@@ -114,12 +81,6 @@ class NativePackageSmokeTest(unittest.TestCase):
         for library in self.prefix.rglob("*.so"):
             library.chmod(0o644)
         self.assertEqual(self.check(), self.prefix)
-
-    def test_unreadable_reporter(self):
-        self.payload()
-        (self.prefix / "lib/trophy/libtrophy_layer.so").chmod(0o000)
-        with self.assertRaisesRegex(RuntimeError, "permissions"):
-            self.check()
 
     def test_nonexecutable_application(self):
         self.payload()
@@ -147,16 +108,6 @@ class NativePackageSmokeTest(unittest.TestCase):
         with patch.object(native, "command", return_value=" (RUNPATH) Library runpath: [/build]"):
             with self.assertRaisesRegex(RuntimeError, "relocatable RUNPATH"):
                 native.check_tree(self.root)
-
-    def test_malformed_manifest(self):
-        self.payload()
-        path = self.prefix / "share/trophy/vulkan_layer/trophy_layer.json"
-        for manifest in ([], {"layer": []}, {"layer": {"library_path": {}}},
-                         {"layer": {"library_path": " "}}):
-            with self.subTest(manifest=manifest):
-                path.write_text(json.dumps(manifest))
-                with self.assertRaisesRegex(RuntimeError, "library_path"):
-                    self.check()
 
     def test_host_library_cannot_mask_missing_local_resolution(self):
         self.payload()

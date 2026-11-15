@@ -74,9 +74,6 @@ class Application : public QApplication {
   Q_PROPERTY(bool runWithoutTraySupported READ isRunWithoutTraySupported CONSTANT)
   Q_PROPERTY(bool useNativeDialogs READ useNativeDialogs NOTIFY useNativeDialogsChanged)
   Q_PROPERTY(bool suppressNextStorageNotification READ suppressNextStorageNotification WRITE setSuppressNextStorageNotification NOTIFY suppressNextStorageNotificationChanged)
-  Q_PROPERTY(bool vulkanLayerRegistered READ vulkanLayerRegistered NOTIFY detectionStatusChanged)
-  Q_PROPERTY(int vulkanBundledHelperVersion READ vulkanBundledHelperVersion NOTIFY detectionStatusChanged)
-  Q_PROPERTY(int vulkanHelperVersion READ vulkanHelperVersion NOTIFY detectionStatusChanged)
   // Discovery hint: the Games page picks this up, opens the Add Game dialog
   // and clears it. Empty means "nothing to add".
   Q_PROPERTY(QString pendingAddGameQuery READ pendingAddGameQuery NOTIFY pendingAddGameQueryChanged)
@@ -118,12 +115,6 @@ public:
 
   // Encoder detection (called from QML)
   Q_INVOKABLE bool isEncoderAvailable(const QString &name) const;
-
-  // Detection-component status for the setup wizard (live properties).
-  bool vulkanLayerRegistered() const { return m_vulkanLayerRegistered; }
-  Q_INVOKABLE bool setVulkanLayerEnabled(bool enabled);
-  int vulkanBundledHelperVersion() const;
-  int vulkanHelperVersion() const;
 
   bool suppressNextStorageNotification() const;
   void setSuppressNextStorageNotification(bool suppress);
@@ -212,12 +203,6 @@ private:
   // DVR segments). Reuses the player's cache instances and in-flight jobs.
   void preparePlayerCaches(const QString &filePath);
   friend class ApplicationMediaCacheTest;
-  // Registers the Vulkan implicit layer; true when the layer JSON is in
-  // place (result cached in m_vulkanLayerRegistered at startup).
-  bool ensureVulkanLayerRegistered(bool allow32BitMigration = false);
-  // Deletes our layer JSON; true when nothing remains registered.
-  bool removeVulkanLayerRegistration();
-
   std::unique_ptr<RecordingManager> m_recordingManager;
   std::unique_ptr<SettingsManager> m_settingsManager;
   std::unique_ptr<StorageManager> m_storageManager;
@@ -339,7 +324,6 @@ private:
   void onAuthorizePromptWaitTimeout();
   friend class ApplicationAuthorizePromptTest;
   bool m_suppressNextStorageNotification = false;
-  bool m_vulkanLayerRegistered = false;
   bool m_minimizeNotifyShown = false;
   bool m_forceMinimized = false;
   QString m_postUpdateFromVersion;

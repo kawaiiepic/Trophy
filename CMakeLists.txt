@@ -116,9 +116,6 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Widgets
 )
 
-# Find Vulkan (for the detection layer)
-find_package(Vulkan REQUIRED)
-
 qt_standard_project_setup()
 
 # Qt policies
@@ -249,37 +246,10 @@ endif()
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/resources/kwin/"
      DESTINATION "${CMAKE_BINARY_DIR}/kwin-scripts")
 
-# Detection reporter (Vulkan layer). It reports to
-# /tmp/trophy-detection.sock with the same START/STOP protocol.
 # NOTE: IEncoder has Q_OBJECT, so IEncoder.h (not a .cpp) is listed in test
 # target sources wherever FFmpegEncoder.cpp is compiled — AUTOMOC generates
 # the metaobject from the header. Same for the main Trophy target via
 # ENCODING_HEADERS.
-add_library(trophy_layer SHARED src/vulkan_layer/trophy_layer.cpp)
-target_link_libraries(trophy_layer PRIVATE Vulkan::Vulkan)
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(trophy_layer PRIVATE
-        -Wall
-        -Wextra
-        -Wpedantic
-        -Wno-unused-parameter
-    )
-endif()
-set_target_properties(trophy_layer PROPERTIES
-    OUTPUT_NAME "trophy_layer"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/vulkan_layer"
-)
-
-# Generate the implicit-layer JSON next to the built Vulkan layer so
-# Application::ensureVulkanLayerRegistered() finds it in dev builds.
-# NOTE: generator expressions don't expand in configure_file, so use the
-# predictable output path (LIBRARY_OUTPUT_DIRECTORY + OUTPUT_NAME above).
-set(LIBRARY_PATH "${CMAKE_BINARY_DIR}/vulkan_layer/libtrophy_layer.so")
-configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_layer/trophy_layer.json.in"
-    "${CMAKE_BINARY_DIR}/vulkan_layer/trophy_layer.json"
-    @ONLY
-)
 
 # Source files
 set(CORE_SOURCES
@@ -346,6 +316,7 @@ set(DETECTION_SOURCES
     src/detection/GameIdentity.cpp
     src/detection/DetectionPolicy.cpp
     src/detection/LegacyGlShimCleanup.cpp
+    src/detection/LegacyVulkanLayerCleanup.cpp
     src/detection/ToplevelModel.cpp
     src/detection/ToplevelRegistry.cpp
     src/detection/PipeWireStreamWatcher.cpp
@@ -357,7 +328,7 @@ if(WAYLAND_CLIENT_FOUND AND WAYLAND_SCANNER_EXECUTABLE)
 endif()
 
 
-list(APPEND DETECTION_SOURCES src/detection/WaylandWindowMonitor.cpp src/detection/KWinBackend.cpp src/detection/GnomeBackend.cpp src/detection/HyprlandBackend.cpp src/detection/SwayBackend.cpp src/detection/WindowInfo.cpp src/detection/VulkanLayer.cpp)
+list(APPEND DETECTION_SOURCES src/detection/WaylandWindowMonitor.cpp src/detection/KWinBackend.cpp src/detection/GnomeBackend.cpp src/detection/HyprlandBackend.cpp src/detection/SwayBackend.cpp src/detection/WindowInfo.cpp)
 
 set(LIBRARY_SOURCES
     src/library/ShareExportEngine.cpp
@@ -440,6 +411,7 @@ set(DETECTION_HEADERS
     src/detection/GameIdentity.h
     src/detection/DetectionPolicy.h
     src/detection/LegacyGlShimCleanup.h
+    src/detection/LegacyVulkanLayerCleanup.h
     src/detection/ToplevelModel.h
     src/detection/ToplevelRegistry.h
     src/detection/PipeWireStreamWatcher.h
@@ -448,7 +420,7 @@ set(DETECTION_HEADERS
 )
 
 
-list(APPEND DETECTION_HEADERS src/detection/WaylandWindowMonitor.h src/detection/KWinBackend.h src/detection/WindowInfo.h src/detection/GnomeBackend.h src/detection/HyprlandBackend.h src/detection/SwayBackend.h src/detection/VulkanLayer.h)
+list(APPEND DETECTION_HEADERS src/detection/WaylandWindowMonitor.h src/detection/KWinBackend.h src/detection/WindowInfo.h src/detection/GnomeBackend.h src/detection/HyprlandBackend.h src/detection/SwayBackend.h)
 
 set(LIBRARY_HEADERS
     src/library/ShareExporter.h
@@ -701,49 +673,6 @@ install(FILES resources/icons/default-apps/README.md LICENSE
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/trophy/default-app-icons
 )
 
-install(TARGETS trophy_layer
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/trophy
-)
-
-# Optional separately built i386 companions. No 32-bit toolchain or runtime is
-# required for ordinary builds. Explicitly opting in also opts the packager into
-# the resulting native package's architecture-specific runtime dependencies.
-set(TROPHY_REPORTERS32_DIR "" CACHE PATH "Directory containing optional i386 reporter shared objects")
-if(TROPHY_REPORTERS32_DIR)
-    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
-        message(FATAL_ERROR "i386 reporter companions require an x86_64 application build")
-    endif()
-    foreach(name IN ITEMS libtrophy_layer.so)
-        set(reporter "${TROPHY_REPORTERS32_DIR}/${name}")
-        if(NOT EXISTS "${reporter}" OR IS_DIRECTORY "${reporter}" OR IS_SYMLINK "${reporter}")
-            message(FATAL_ERROR "Missing or symlinked i386 reporter: ${reporter}")
-        endif()
-        file(SIZE "${reporter}" reporter_size)
-        if(reporter_size LESS 20 OR reporter_size GREATER 16777216)
-            message(FATAL_ERROR "Invalid i386 reporter size: ${reporter}")
-        endif()
-        file(READ "${reporter}" header LIMIT 20 HEX)
-        string(LENGTH "${header}" header_length)
-        if(NOT header_length EQUAL 40 OR NOT header MATCHES "^7f454c46010101")
-            message(FATAL_ERROR "Expected little-endian ELF32 reporter: ${reporter}")
-        endif()
-        string(SUBSTRING "${header}" 32 8 elf_type_machine)
-        if(NOT elf_type_machine STREQUAL "03000300")
-            message(FATAL_ERROR "Expected i386 ET_DYN reporter: ${reporter}")
-        endif()
-    endforeach()
-    add_custom_target(trophy_reporters32 ALL
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/reporters32"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${TROPHY_REPORTERS32_DIR}/libtrophy_layer.so"
-            "${CMAKE_BINARY_DIR}/reporters32"
-        VERBATIM)
-    install(FILES "${TROPHY_REPORTERS32_DIR}/libtrophy_layer.so"
-        DESTINATION "lib/trophy/reporters32")
-endif()
-install(FILES "${CMAKE_BINARY_DIR}/vulkan_layer/trophy_layer.json"
-    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/trophy/vulkan_layer
-)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/resources/kwin/"
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/trophy/kwin
 )

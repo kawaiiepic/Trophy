@@ -23,7 +23,6 @@
 
 class IntegrationUiApp : public QObject {
   Q_OBJECT
-  Q_PROPERTY(bool vulkanLayerRegistered READ no CONSTANT)
   Q_PROPERTY(bool trayAvailable READ no CONSTANT)
   Q_PROPERTY(bool canRestartTrophy READ canRestartTrophy WRITE setCanRestartTrophy NOTIFY stateChanged)
 

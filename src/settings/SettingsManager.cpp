@@ -118,7 +118,6 @@ void SettingsManager::load() {
   m_autoDetectGames = detection["autoDetect"].toBool(true);
   m_autoRecordEnabled = detection["autoRecord"].toBool(false);
   m_windowTrackingEnabled = detection["windowTracking"].toBool(false);
-  m_vulkanLayerEnabled = detection["vulkanLayer"].toBool(false);
   m_setupCompleted = detection["setupCompleted"].toBool(false);
 
   // Load general settings
@@ -204,7 +203,6 @@ void SettingsManager::load() {
   emit autoDetectGamesChanged();
   emit autoRecordEnabledChanged();
   emit windowTrackingEnabledChanged();
-  emit vulkanLayerEnabledChanged();
   emit setupCompletedChanged();
   emit minimizeToTrayChanged();
   emit startMinimizedChanged();
@@ -278,7 +276,6 @@ void SettingsManager::save() {
   detection["autoDetect"] = m_autoDetectGames;
   detection["autoRecord"] = m_autoRecordEnabled;
   detection["windowTracking"] = m_windowTrackingEnabled;
-  detection["vulkanLayer"] = m_vulkanLayerEnabled;
   detection["setupCompleted"] = m_setupCompleted;
   root["detection"] = detection;
 
@@ -368,7 +365,6 @@ void SettingsManager::resetToDefaults() {
   emit autoDetectGamesChanged();
   emit autoRecordEnabledChanged();
   emit windowTrackingEnabledChanged();
-  emit vulkanLayerEnabledChanged();
   emit setupCompletedChanged();
   emit minimizeToTrayChanged();
   emit startMinimizedChanged();
@@ -421,7 +417,6 @@ void SettingsManager::loadDefaults() {
   m_autoDetectGames = true;
   m_autoRecordEnabled = false;
   m_windowTrackingEnabled = false;
-  m_vulkanLayerEnabled = false;
 
   // System tray
   m_minimizeToTray = true;
@@ -635,14 +630,6 @@ void SettingsManager::setWindowTrackingEnabled(bool enabled) {
     m_windowTrackingEnabled = enabled;
     save();
     emit windowTrackingEnabledChanged();
-  }
-}
-
-void SettingsManager::setVulkanLayerEnabled(bool enabled) {
-  if (m_vulkanLayerEnabled != enabled) {
-    m_vulkanLayerEnabled = enabled;
-    save();
-    emit vulkanLayerEnabledChanged();
   }
 }
 

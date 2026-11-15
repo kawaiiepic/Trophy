@@ -174,8 +174,8 @@ public:
    */
   void setStreamWatcher(PipeWireStreamWatcher *watcher);
 
-  // SteamAppId/SteamGameId from a process environment (what the Vulkan
-  // layer reads via getenv, but usable for any PID after the fact).
+  // SteamAppId/SteamGameId from a process environment, usable for any PID
+  // after the fact.
   static uint steamAppIdForPid(qint64 pid);
 
   // "steam_app_1422450" -> 1422450, anything else -> 0. Window classes
