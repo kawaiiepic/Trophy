@@ -10,6 +10,9 @@
 #include "HyprlandBackend.h"
 #include "KWinBackend.h"
 #include "KWinProtocolBackend.h"
+#include "WlrToplevelBackend.h"
+#include "XWaylandWindowBackend.h"
+#include "WindowMerge.h"
 #include "SwayBackend.h"
 #include "DetectorVersion.h"
 
@@ -86,7 +89,7 @@ void WaylandWindowMonitor::startMonitoring(bool repairBackend) {
 
 void WaylandWindowMonitor::stopMonitoring() {
   if (!m_monitoring && !m_kwin && !m_kwinProtocol && !m_gnome &&
-      !m_hyprland && !m_sway) {
+      !m_hyprland && !m_sway && !m_wlr && !m_x11) {
     return;
   }
 
@@ -107,6 +110,9 @@ void WaylandWindowMonitor::stopMonitoring() {
   };
   retire(m_kwinProtocol);
   retire(m_kwin);
+  retire(m_wlr);
+  retire(m_x11);
+  m_cliIsEnrichment = false;
   retire(m_gnome);
   retire(m_hyprland);
   retire(m_sway);
@@ -114,6 +120,7 @@ void WaylandWindowMonitor::stopMonitoring() {
     m_retired.push_back({std::move(polling), std::move(m_pollFuture)});
   // Retired workers must not leave a frozen, apparently visible window in
   // the picker or restore-token startup gate while tracking is disabled.
+  m_enrichmentWindows.clear();
   ingestSnapshot({});
   collectRetired();
   // Keep the housekeeping timer alive while retired operations settle.
@@ -133,6 +140,10 @@ QList<WindowInfo> WaylandWindowMonitor::windows() const {
 }
 
 WindowInfo WaylandWindowMonitor::windowForPid(qint64 pid) const {
+  // Rows without a PID are common now (listing-only protocols), so an
+  // unknown pid must not resolve to the first anonymous window.
+  if (pid <= 0)
+    return WindowInfo{};
   QMutexLocker lg(&m_mutex);
   for (const WindowInfo &w : m_windows) {
     if (w.pid == pid)
@@ -163,7 +174,11 @@ QString WaylandWindowMonitor::windowTrackingMode() const {
     return QStringLiteral("helper");
   if (m_compositor.compare("hyprland", Qt::CaseInsensitive) == 0 ||
       m_compositor.compare("sway", Qt::CaseInsensitive) == 0)
-    return QStringLiteral("tool");
+    return (m_wlr && m_wlr->isActive()) ? QStringLiteral("protocol")
+                                        : QStringLiteral("tool");
+  // Compositors without a Trophy backend can still see X11 windows.
+  if (m_x11 && m_x11->isActive())
+    return QStringLiteral("x11");
   return QString();
 }
 
@@ -201,9 +216,15 @@ bool WaylandWindowMonitor::trackingReady() const {
   if (m_kwin)
     return m_kwin->isActive() && m_kwin->hasSnapshot() &&
            kwinScriptInstalled() && kwinScriptEnabled();
-  return (m_gnome && m_gnome->isActive()) ||
-         (m_hyprland && m_hyprland->isActive()) ||
-         (m_sway && m_sway->isActive());
+  if (m_wlr)
+    return m_wlr->isActive() && m_wlr->hasSnapshot();
+  if ((m_gnome && m_gnome->isActive()) ||
+      (m_hyprland && m_hyprland->isActive()) ||
+      (m_sway && m_sway->isActive()))
+    return true;
+  // No compositor integration at all: XWayland windows are still a partial
+  // window list, which is better than claiming tracking is dead.
+  return m_x11 && m_x11->isActive() && m_x11->hasSnapshot();
 }
 
 void WaylandWindowMonitor::repairTracking() {
@@ -219,7 +240,17 @@ void WaylandWindowMonitor::uninstallBackend() {
   emit windowsChanged();
 }
 
+void WaylandWindowMonitor::ingestEnrichment(const QList<WindowInfo> &windows) {
+  m_enrichmentWindows = windows;
+  publishWindows();
+}
+
 void WaylandWindowMonitor::ingestSnapshot(const QList<WindowInfo> &windows) {
+  m_primaryWindows = windows;
+  publishWindows();
+}
+
+void WaylandWindowMonitor::publishWindows() {
   // The KWin script reports client.windowId, which is 0 for every Wayland
   // window, so without remapping all KWin rows share id 0 and any
   // id-based lookup matches the first row. Remap chain per row:
@@ -230,7 +261,8 @@ void WaylandWindowMonitor::ingestSnapshot(const QList<WindowInfo> &windows) {
   //   zero id + no key -> kSyntheticIdBase + snapshot position (old
   //     behavior; stable only while the order holds).
   // Real nonzero ids from any backend are never rewritten.
-  QList<WindowInfo> normalized = windows;
+  QList<WindowInfo> normalized =
+      mergeWindowSnapshots(m_primaryWindows, m_enrichmentWindows);
   QSet<quint64> used;
   for (const WindowInfo &w : normalized) {
     if (w.id != 0)
@@ -307,8 +339,8 @@ void WaylandWindowMonitor::checkFocusedApp() {
       qInfo() << "Window tracking not ready";
     emit windowsChanged();
   }
-  if (!m_gnome && !m_hyprland && !m_sway && !m_pollOverride)
-    return; // KWin is push-only; housekeeping needs no polling worker.
+  if (!m_gnome && !m_hyprland && !m_sway && !m_x11 && !m_pollOverride)
+    return; // Push-only backends need no polling worker.
   if (m_pollFuture.valid()) {
     if (m_pollFuture.wait_for(std::chrono::seconds(0)) !=
         std::future_status::ready)
@@ -321,12 +353,13 @@ void WaylandWindowMonitor::checkFocusedApp() {
   }
   try {
     m_pollFuture = std::async(std::launch::async,
-        [gnome = m_gnome, hyprland = m_hyprland, sway = m_sway,
+        [gnome = m_gnome, hyprland = m_hyprland, sway = m_sway, x11 = m_x11,
          override = m_pollOverride]() {
       if (override) { override(); return; }
       if (gnome) gnome->refresh();
       if (hyprland) hyprland->refresh();
       if (sway) sway->refresh();
+      if (x11) x11->refresh();
     });
   } catch (const std::exception &e) {
     qWarning() << "Unable to start compositor poll:" << e.what();
@@ -352,6 +385,22 @@ void WaylandWindowMonitor::collectRetired() {
 void WaylandWindowMonitor::onBackendWindowsUpdated() {
   if (!m_monitoring) return;
   QObject *src = sender();
+  if (m_x11 && src == m_x11.get()) {
+    ingestEnrichment(m_x11->windows());
+    return;
+  }
+  if (m_wlr && src == m_wlr.get()) {
+    ingestSnapshot(m_wlr->windows());
+    return;
+  }
+  if (m_cliIsEnrichment &&
+      ((m_hyprland && src == m_hyprland.get()) ||
+       (m_sway && src == m_sway.get()))) {
+    ingestEnrichment(m_hyprland && src == m_hyprland.get()
+                         ? m_hyprland->windows()
+                         : m_sway->windows());
+    return;
+  }
   if (m_kwinProtocol && src == m_kwinProtocol.get())
     ingestSnapshot(m_kwinProtocol->windows());
   else if (m_kwin && src == m_kwin.get())
@@ -365,6 +414,24 @@ void WaylandWindowMonitor::onBackendWindowsUpdated() {
 }
 
 void WaylandWindowMonitor::setupCompositorTracking(bool repairBackend) {
+  auto startWlrootsBackend = [this]() {
+    if (m_wlr)
+      return;
+    m_wlr = std::make_shared<WlrToplevelBackend>();
+    const auto generation = m_generation;
+    connect(m_wlr.get(), &WlrToplevelBackend::windowsUpdated, this,
+            [this, generation] { if (generation == m_generation) onBackendWindowsUpdated(); });
+    QString error;
+    if (m_wlr->start(&error)) {
+      qInfo() << "Window tracking: wlr-foreign-toplevel-management";
+    } else {
+      qInfo() << "wlr-foreign-toplevel-management unavailable (" << error << ")";
+      disconnect(m_wlr.get(), nullptr, this, nullptr);
+      m_wlr->stop();
+      m_wlr.reset();
+    }
+  };
+
   if (m_compositor.contains("kwin", Qt::CaseInsensitive)) {
     // KWin exposes its own window-management protocol to ordinary clients:
     // app_id, title, pid, focus/fullscreen state and geometry, event-driven.
@@ -408,27 +475,58 @@ void WaylandWindowMonitor::setupCompositorTracking(bool repairBackend) {
     }
     if (!m_gnome->start(repairBackend))
       qWarning() << "GNOME backend failed to start; window data unavailable";
-  } else if (m_compositor.contains("hyprland", Qt::CaseInsensitive)) {
-    if (!m_hyprland) {
-      m_hyprland = std::make_shared<HyprlandBackend>();
-      const auto generation = m_generation;
-      connect(m_hyprland.get(), &HyprlandBackend::windowsUpdated, this,
-              [this, generation] { if (generation == m_generation) onBackendWindowsUpdated(); });
+  } else if (m_compositor.contains("hyprland", Qt::CaseInsensitive) ||
+             m_compositor.contains("sway", Qt::CaseInsensitive)) {
+    // One protocol-based list for the whole wlroots family, event-driven.
+    // The compositor CLI keeps supplying the PID and geometry the protocol
+    // does not carry, as an enrichment source.
+    startWlrootsBackend();
+    if (m_wlr)
+      m_cliIsEnrichment = true;
+    if (m_compositor.contains("hyprland", Qt::CaseInsensitive)) {
+      if (!m_hyprland) {
+        m_hyprland = std::make_shared<HyprlandBackend>();
+        const auto generation = m_generation;
+        connect(m_hyprland.get(), &HyprlandBackend::windowsUpdated, this,
+                [this, generation] { if (generation == m_generation) onBackendWindowsUpdated(); });
+      }
+      if (!m_hyprland->start())
+        qWarning() << "Hyprland backend failed to start; window data unavailable";
+    } else {
+      if (!m_sway) {
+        m_sway = std::make_shared<SwayBackend>();
+        const auto generation = m_generation;
+        connect(m_sway.get(), &SwayBackend::windowsUpdated, this,
+                [this, generation] { if (generation == m_generation) onBackendWindowsUpdated(); });
+      }
+      if (!m_sway->start())
+        qWarning() << "Sway backend failed to start; window data unavailable";
     }
-    if (!m_hyprland->start())
-      qWarning() << "Hyprland backend failed to start; window data unavailable";
-  } else if (m_compositor.contains("sway", Qt::CaseInsensitive)) {
-    if (!m_sway) {
-      m_sway = std::make_shared<SwayBackend>();
-      const auto generation = m_generation;
-      connect(m_sway.get(), &SwayBackend::windowsUpdated, this,
-              [this, generation] { if (generation == m_generation) onBackendWindowsUpdated(); });
-    }
-    if (!m_sway->start())
-      qWarning() << "Sway backend failed to start; window data unavailable";
   } else {
-    qWarning() << "Unknown compositor, window tracking unavailable:"
-               << m_compositor;
+    // Not KDE/GNOME and not a known wlroots CLI: ask for the standard
+    // wlroots toplevel list. This is what adds labwc, river, Wayfire, niri
+    // and similar compositors without a per-desktop integration.
+    startWlrootsBackend();
+    if (!m_wlr)
+      qWarning() << "Unknown compositor, window tracking unavailable:"
+                 << m_compositor;
+  }
+
+  // KDE and GNOME backends already report a PID per window, and the
+  // hyprctl/swaymsg backends do too. Everywhere else XWayland is the only
+  // desktop-agnostic source of one — and Proton games live there.
+  const bool needPid = !m_kwinProtocol && !m_kwin && !m_gnome &&
+                       !m_hyprland && !m_sway;
+  if (needPid && !m_x11 && XWaylandWindowBackend::isAvailable()) {
+    m_x11 = std::make_shared<XWaylandWindowBackend>();
+    const auto generation = m_generation;
+    connect(m_x11.get(), &XWaylandWindowBackend::windowsUpdated, this,
+            [this, generation] { if (generation == m_generation) onBackendWindowsUpdated(); });
+    if (!m_x11->start()) {
+      disconnect(m_x11.get(), nullptr, this, nullptr);
+      m_x11->stop();
+      m_x11.reset();
+    }
   }
 }
 

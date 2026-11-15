@@ -225,7 +225,10 @@ if(WAYLAND_CLIENT_FOUND AND WAYLAND_SCANNER_EXECUTABLE)
     message(STATUS "Wayland toplevel registry enabled")
     set(TROPHY_TOPLEVEL_PROTOCOL_DIR "${CMAKE_BINARY_DIR}/wayland-protocols")
     set(TROPHY_TOPLEVEL_PROTOCOL_SOURCES "")
-    foreach(trophy_protocol ext-foreign-toplevel-list-v1 plasma-window-management)
+    foreach(trophy_protocol
+        ext-foreign-toplevel-list-v1
+        plasma-window-management
+        wlr-foreign-toplevel-management-unstable-v1)
         set(TROPHY_TOPLEVEL_PROTOCOL_XML
             "${CMAKE_CURRENT_SOURCE_DIR}/src/detection/protocols/${trophy_protocol}.xml")
         add_custom_command(
@@ -249,6 +252,19 @@ if(WAYLAND_CLIENT_FOUND AND WAYLAND_SCANNER_EXECUTABLE)
 else()
     message(STATUS "Wayland toplevel registry unavailable (wayland-client or wayland-scanner missing)")
     set(TROPHY_WAYLAND_CLIENT_LIB "")
+endif()
+
+# XWayland clients publish _NET_WM_PID, which is the only desktop-agnostic
+# window->process mapping: listing-only Wayland protocols have no PID, and
+# Proton/Wine games are X11 windows. Read-only, short-lived connection.
+pkg_check_modules(XCB_CLIENT IMPORTED_TARGET xcb)
+if(XCB_CLIENT_FOUND)
+    message(STATUS "XWayland PID enrichment enabled")
+    add_compile_definitions(HAVE_XCB)
+    set(TROPHY_XCB_LIB PkgConfig::XCB_CLIENT)
+else()
+    message(STATUS "XWayland PID enrichment unavailable (libxcb missing)")
+    set(TROPHY_XCB_LIB "")
 endif()
 
 # KWin monitor script: copy its contents to the build tree for dev runs
@@ -332,6 +348,11 @@ set(DETECTION_SOURCES
     src/detection/ToplevelRegistry.cpp
     src/detection/PlasmaToplevelModel.cpp
     src/detection/KWinProtocolBackend.cpp
+    src/detection/XWaylandWindowBackend.cpp
+    src/detection/WlrToplevelBackend.cpp
+    src/detection/WlrToplevelModel.cpp
+    src/detection/WindowMerge.cpp
+    src/detection/WindowOutputSize.cpp
     src/detection/PipeWireStreamWatcher.cpp
     src/detection/GameWhitelist.cpp
 )
@@ -428,6 +449,11 @@ set(DETECTION_HEADERS
     src/detection/ToplevelRegistry.h
     src/detection/PlasmaToplevelModel.h
     src/detection/KWinProtocolBackend.h
+    src/detection/XWaylandWindowBackend.h
+    src/detection/WlrToplevelBackend.h
+    src/detection/WlrToplevelModel.h
+    src/detection/WindowMerge.h
+    src/detection/WindowOutputSize.h
     src/detection/PipeWireStreamWatcher.h
     src/detection/GameListModel.h
     src/detection/GameWhitelist.h
@@ -602,6 +628,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     PkgConfig::SWRESAMPLE
     Qt6::Network
     ${TROPHY_WAYLAND_CLIENT_LIB}
+    ${TROPHY_XCB_LIB}
 )
 
 if(PIPEWIRE_FOUND)

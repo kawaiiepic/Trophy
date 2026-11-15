@@ -104,7 +104,7 @@ guidance rather than assuming every codec ships with the native package.
 | --- | --- | --- | --- |
 | **KDE Plasma (KWin)** | Built in (compositor window protocol) | Portal `GlobalShortcuts` | Built in |
 | **GNOME (Mutter)** | Bundled Trophy Window Helper extension | Portal `GlobalShortcuts` | Needs the AppIndicator extension |
-| **Hyprland / Sway** | Built-in compositor integration | Portal if the backend implements it, otherwise native binds | Compositor-dependent |
+| **Hyprland / Sway / other wlroots** | Built-in compositor protocol (X11 windows also supply PIDs) | Portal if the backend implements it, otherwise native binds | Compositor-dependent |
 
 Trophy registers a reverse-DNS desktop entry
 (`io.github.stevenjwheeler.Trophy.desktop`) so the portal can identify it.
@@ -141,6 +141,8 @@ Manual recording is also available. When no game is tracked, the Record action o
 Trophy combines game identity with compositor window context. Detection is conservative: not every launcher or runtime is covered. Use the Games page to manage recognition and blocking rules.
 
 Trophy loads **no library into games**: Steam identity from the process environment/library, a recognised games-only launcher in the process ancestry, or an installed desktop entry with `Categories=Game` (and no communication/productivity category) is evidence, and the focused window then confirms it. Detection does not hook, preload, or otherwise load anything into the game.
+
+Window identity and focus come from the compositor; on KDE that is KWin's own window-management protocol, on the wlroots family the standard toplevel protocol, and on GNOME a small extension. Where a compositor exposes no process ids (the wlroots protocols carry none), Trophy reads them from X11 windows — where Proton/Wine games run — and otherwise tracks the game by its window alone, so detection still works without one.
 
 A game with no such evidence is recognized when you add it to the Games page, or accept the **Suspected game** offer for it. When Trophy sees a window it cannot identify it shows that notice once: **Add to Games** records it and (when automatic recording or instant replay is enabled) asks for capture permission straight away; **Block** makes sure it is never offered again. The notice alone never records anything.
 

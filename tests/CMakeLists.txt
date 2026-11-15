@@ -439,6 +439,32 @@ target_include_directories(test_PipeWireStreamWatcher PRIVATE ${TEST_INCLUDE_DIR
 target_link_libraries(test_PipeWireStreamWatcher PRIVATE ${TEST_LINK_LIBS} Qt6::Concurrent)
 gtest_discover_tests(test_PipeWireStreamWatcher)
 
+set(TROPHY_MONITOR_SUPPORT_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/detection/XWaylandWindowBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/WlrToplevelBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/WlrToplevelModel.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/WindowMerge.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/WindowOutputSize.cpp)
+
+add_executable(test_WlrToplevelModel test_WlrToplevelModel.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/WlrToplevelModel.cpp)
+target_include_directories(test_WlrToplevelModel PRIVATE ${TEST_INCLUDE_DIRS})
+target_link_libraries(test_WlrToplevelModel PRIVATE ${TEST_LINK_LIBS})
+gtest_discover_tests(test_WlrToplevelModel)
+
+add_executable(test_WindowMerge test_WindowMerge.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/WindowMerge.cpp)
+target_include_directories(test_WindowMerge PRIVATE ${TEST_INCLUDE_DIRS})
+target_link_libraries(test_WindowMerge PRIVATE ${TEST_LINK_LIBS})
+gtest_discover_tests(test_WindowMerge)
+
+add_executable(test_XWaylandParse test_XWaylandParse.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/XWaylandWindowBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/WindowOutputSize.cpp)
+target_include_directories(test_XWaylandParse PRIVATE ${TEST_INCLUDE_DIRS})
+target_link_libraries(test_XWaylandParse PRIVATE ${TEST_LINK_LIBS} ${TROPHY_XCB_LIB})
+gtest_discover_tests(test_XWaylandParse)
+
 add_executable(test_PlasmaToplevelModel test_PlasmaToplevelModel.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/PlasmaToplevelModel.cpp)
 target_include_directories(test_PlasmaToplevelModel PRIVATE ${TEST_INCLUDE_DIRS})
@@ -448,7 +474,10 @@ gtest_discover_tests(test_PlasmaToplevelModel)
 if(WAYLAND_CLIENT_FOUND AND WAYLAND_SCANNER_EXECUTABLE)
     set(TOPLEVEL_TEST_PROTO_DIR "${CMAKE_CURRENT_BINARY_DIR}/wayland-protocols")
     set(TOPLEVEL_TEST_PROTO_SOURCES "")
-    foreach(trophy_test_protocol ext-foreign-toplevel-list-v1 plasma-window-management)
+    foreach(trophy_test_protocol
+        ext-foreign-toplevel-list-v1
+        plasma-window-management
+        wlr-foreign-toplevel-management-unstable-v1)
         set(TOPLEVEL_TEST_XML
             "${CMAKE_SOURCE_DIR}/src/detection/protocols/${trophy_test_protocol}.xml")
         add_custom_command(
@@ -479,9 +508,21 @@ if(WAYLAND_CLIENT_FOUND AND WAYLAND_SCANNER_EXECUTABLE)
         ${TEST_LINK_LIBS} PkgConfig::WAYLAND_CLIENT)
     gtest_discover_tests(test_ToplevelRegistry)
 
+    add_executable(test_WlrToplevelBackend test_WlrToplevelBackend.cpp
+        ${CMAKE_SOURCE_DIR}/src/detection/WlrToplevelBackend.cpp
+        ${CMAKE_SOURCE_DIR}/src/detection/WlrToplevelModel.cpp
+        "${TOPLEVEL_TEST_PROTO_DIR}/wlr-foreign-toplevel-management-unstable-v1-protocol.c")
+    target_include_directories(test_WlrToplevelBackend PRIVATE
+        ${TEST_INCLUDE_DIRS} "${TOPLEVEL_TEST_PROTO_DIR}")
+    target_compile_definitions(test_WlrToplevelBackend PRIVATE HAVE_WAYLAND_TOPLEVEL)
+    target_link_libraries(test_WlrToplevelBackend PRIVATE
+        ${TEST_LINK_LIBS} PkgConfig::WAYLAND_CLIENT)
+    gtest_discover_tests(test_WlrToplevelBackend)
+
     add_executable(test_KWinProtocolBackend test_KWinProtocolBackend.cpp
         ${CMAKE_SOURCE_DIR}/src/detection/KWinProtocolBackend.cpp
         ${CMAKE_SOURCE_DIR}/src/detection/PlasmaToplevelModel.cpp
+        ${CMAKE_SOURCE_DIR}/src/detection/WindowOutputSize.cpp
         "${TOPLEVEL_TEST_PROTO_DIR}/plasma-window-management-protocol.c")
     target_include_directories(test_KWinProtocolBackend PRIVATE
         ${TEST_INCLUDE_DIRS} "${TOPLEVEL_TEST_PROTO_DIR}")
@@ -537,13 +578,14 @@ add_library(test_RecordingBackend STATIC
     ${CMAKE_SOURCE_DIR}/src/detection/KWinProtocolBackend.h
     ${CMAKE_SOURCE_DIR}/src/detection/PlasmaToplevelModel.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/PlasmaToplevelModel.h
+    ${TROPHY_MONITOR_SUPPORT_SOURCES}
     ${TOPLEVEL_TEST_PROTO_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.h
     ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.cpp
     ${CMAKE_SOURCE_DIR}/tests/RecordingManagerLinkStubs.cpp
 )
 target_include_directories(test_RecordingBackend PRIVATE ${TEST_INCLUDE_DIRS} ${AVCODEC_INCLUDE_DIRS} ${AVUTIL_INCLUDE_DIRS} ${SWRESAMPLE_INCLUDE_DIRS} "${TOPLEVEL_TEST_PROTO_DIR}")
-target_link_libraries(test_RecordingBackend PRIVATE ${TEST_LINK_LIBS} Qt6::DBus Qt6::Network Qt6::Concurrent PkgConfig::PIPEWIRE ${AVCODEC_LIBRARIES} ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES} ${SWSCALE_LIBRARIES} ${SWRESAMPLE_LIBRARIES} ${TROPHY_WAYLAND_CLIENT_LIB})
+target_link_libraries(test_RecordingBackend PRIVATE ${TEST_LINK_LIBS} Qt6::DBus Qt6::Network Qt6::Concurrent PkgConfig::PIPEWIRE ${AVCODEC_LIBRARIES} ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES} ${SWSCALE_LIBRARIES} ${SWRESAMPLE_LIBRARIES} ${TROPHY_WAYLAND_CLIENT_LIB} ${TROPHY_XCB_LIB})
 # Propagate GTest to consumers of this static backend (they use gtest macros).
 target_link_libraries(test_RecordingBackend PUBLIC GTest::GTest GTest::Main)
 if(EGL_FOUND)
@@ -661,10 +703,10 @@ target_include_directories(test_Recording PRIVATE ${TEST_INCLUDE_DIRS} ${AVFORMA
 target_link_libraries(test_Recording PRIVATE ${TEST_LINK_LIBS} Qt6::Concurrent ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES} ${AVCODEC_LIBRARIES})
 gtest_discover_tests(test_Recording)
 
-add_executable(test_GameDetectionService test_GameDetectionService.cpp ${CMAKE_SOURCE_DIR}/src/detection/GameDetectionService.cpp ${CMAKE_SOURCE_DIR}/src/detection/GameIdentity.cpp ${CMAKE_SOURCE_DIR}/src/detection/DetectionPolicy.cpp ${CMAKE_SOURCE_DIR}/src/detection/PipeWireStreamWatcher.cpp ${CMAKE_SOURCE_DIR}/src/detection/GameListModel.h ${CMAKE_SOURCE_DIR}/src/detection/GameWhitelist.cpp ${CMAKE_SOURCE_DIR}/src/detection/WaylandWindowMonitor.cpp ${CMAKE_SOURCE_DIR}/src/detection/WaylandWindowMonitor.h ${CMAKE_SOURCE_DIR}/src/detection/KWinBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/KWinBackend.h ${CMAKE_SOURCE_DIR}/src/detection/KWinProtocolBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/KWinProtocolBackend.h ${CMAKE_SOURCE_DIR}/src/detection/PlasmaToplevelModel.cpp ${CMAKE_SOURCE_DIR}/src/detection/PlasmaToplevelModel.h ${TOPLEVEL_TEST_PROTO_SOURCES} ${CMAKE_SOURCE_DIR}/src/detection/GnomeBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/GnomeBackend.h ${CMAKE_SOURCE_DIR}/src/detection/HyprlandBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/HyprlandBackend.h ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.h ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.h ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.cpp)
+add_executable(test_GameDetectionService test_GameDetectionService.cpp ${CMAKE_SOURCE_DIR}/src/detection/GameDetectionService.cpp ${CMAKE_SOURCE_DIR}/src/detection/GameIdentity.cpp ${CMAKE_SOURCE_DIR}/src/detection/DetectionPolicy.cpp ${CMAKE_SOURCE_DIR}/src/detection/PipeWireStreamWatcher.cpp ${CMAKE_SOURCE_DIR}/src/detection/GameListModel.h ${CMAKE_SOURCE_DIR}/src/detection/GameWhitelist.cpp ${CMAKE_SOURCE_DIR}/src/detection/WaylandWindowMonitor.cpp ${CMAKE_SOURCE_DIR}/src/detection/WaylandWindowMonitor.h ${CMAKE_SOURCE_DIR}/src/detection/KWinBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/KWinBackend.h ${CMAKE_SOURCE_DIR}/src/detection/KWinProtocolBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/KWinProtocolBackend.h ${CMAKE_SOURCE_DIR}/src/detection/PlasmaToplevelModel.cpp ${CMAKE_SOURCE_DIR}/src/detection/PlasmaToplevelModel.h ${TROPHY_MONITOR_SUPPORT_SOURCES} ${TOPLEVEL_TEST_PROTO_SOURCES} ${CMAKE_SOURCE_DIR}/src/detection/GnomeBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/GnomeBackend.h ${CMAKE_SOURCE_DIR}/src/detection/HyprlandBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/HyprlandBackend.h ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.h ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.h ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.cpp)
 target_include_directories(test_GameDetectionService PRIVATE ${TEST_INCLUDE_DIRS} "${TOPLEVEL_TEST_PROTO_DIR}")
 target_compile_definitions(test_GameDetectionService PRIVATE TROPHY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-target_link_libraries(test_GameDetectionService PRIVATE ${TEST_LINK_LIBS} Qt6::Network Qt6::DBus Qt6::Concurrent ${TROPHY_WAYLAND_CLIENT_LIB})
+target_link_libraries(test_GameDetectionService PRIVATE ${TEST_LINK_LIBS} Qt6::Network Qt6::DBus Qt6::Concurrent ${TROPHY_WAYLAND_CLIENT_LIB} ${TROPHY_XCB_LIB})
 # Every case uses the frozen reporter endpoint. Parallel CTest processes
 # must not mistake another test's listener for the user's live app.
 gtest_discover_tests(test_GameDetectionService PROPERTIES RESOURCE_LOCK trophy_detection_socket)
@@ -948,6 +990,7 @@ add_executable(test_WindowMonitor test_WindowMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/KWinProtocolBackend.h
     ${CMAKE_SOURCE_DIR}/src/detection/PlasmaToplevelModel.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/PlasmaToplevelModel.h
+    ${TROPHY_MONITOR_SUPPORT_SOURCES}
     ${TOPLEVEL_TEST_PROTO_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.h
     ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.cpp
@@ -955,7 +998,7 @@ add_executable(test_WindowMonitor test_WindowMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/core/WindowService.h
 )
 target_include_directories(test_WindowMonitor PRIVATE ${TEST_INCLUDE_DIRS} "${TOPLEVEL_TEST_PROTO_DIR}")
-target_link_libraries(test_WindowMonitor PRIVATE ${TEST_LINK_LIBS} Qt6::DBus ${TROPHY_WAYLAND_CLIENT_LIB})
+target_link_libraries(test_WindowMonitor PRIVATE ${TEST_LINK_LIBS} Qt6::DBus ${TROPHY_WAYLAND_CLIENT_LIB} ${TROPHY_XCB_LIB})
 gtest_discover_tests(test_WindowMonitor)
 
 # Never let the fake Shell own a name on the user's real session bus.

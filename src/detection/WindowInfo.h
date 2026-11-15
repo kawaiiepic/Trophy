@@ -38,6 +38,8 @@ struct WindowInfo {
 
   /** Build from a snapshot object; missing keys default safely. */
   static WindowInfo fromJson(const QJsonObject &o);
+
+  bool operator==(const WindowInfo &other) const = default;
 };
 
 } // namespace TrophyBackend

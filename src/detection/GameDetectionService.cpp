@@ -218,8 +218,9 @@ uint GameDetectionService::steamAppIdForPid(qint64 pid) {
 QVariantMap GameDetectionService::captureIdentityInfo(const QString &gameName) const {
   if (!isGameRunning() || gameName != m_currentGameName || m_currentGameKey.isEmpty())
     return {};
-  QVariantMap info{{"detectedGameKey", m_currentGameKey},
-                   {"detectedGamePid", m_currentGamePid}};
+  QVariantMap info{{"detectedGameKey", m_currentGameKey}};
+  if (m_currentGamePid > 0)
+    info.insert("detectedGamePid", m_currentGamePid);
   const auto steamId = steamAppIdFromAppId(m_currentGameKey);
   if (steamId) info["detectedSteamAppId"] = QString::number(steamId);
   return info;
@@ -372,6 +373,16 @@ void GameDetectionService::trackGame(qint64 pid, const QString &gameName,
   const QString key =
       GameWhitelist::normalizeKey(rawKey.isEmpty() ? gameName : rawKey);
 
+  if (pid <= 0) {
+    // A listing-only window protocol has no process id. Track the window
+    // itself; the liveness watchdog then follows window presence instead of
+    // /proc, and audio hints fall back to the name.
+    qDebug() << "Game detected without a PID:" << displayName << "(" << key
+             << ")";
+    updateCurrentGame(displayName, 0, key);
+    return;
+  }
+
   bool isBetterName = true;
   if (m_pidToGameName.contains(pid)) {
     QString existingName = m_pidToGameName[pid];
@@ -462,7 +473,7 @@ void GameDetectionService::onMonitorWindowsChanged() {
 }
 
 bool GameDetectionService::isUndetectedGameCandidate(const WindowInfo &w) {
-  if (w.pid <= 0 || w.pid == QCoreApplication::applicationPid())
+  if (w.pid > 0 && w.pid == QCoreApplication::applicationPid())
     return false;
   // Windowed games are games: size must not gate discovery, or clicker and
   // small-window titles that no provider knows would never be offered.
@@ -477,7 +488,9 @@ bool GameDetectionService::isUndetectedGameCandidate(const WindowInfo &w) {
   if (name.isEmpty())
     return false;
 
-  const ReporterIdentity identity = reporterIdentity(w.pid, name, 0);
+  const ReporterIdentity identity =
+      w.pid > 0 ? reporterIdentity(w.pid, name, 0)
+                : resolveReporterIdentity(name, QString(), {}, 0, QString());
   if (identity.ignored)
     return false;
   const QString key = identity.key.isEmpty() ? name : identity.key;
@@ -486,7 +499,8 @@ bool GameDetectionService::isUndetectedGameCandidate(const WindowInfo &w) {
   if (isBlacklistedIdentity(name, identity.name) ||
       isBlacklistedIdentity(key, identity.executable))
     return false;
-  if (m_pidToGameName.contains(w.pid) || m_pidToRawKey.key(key, 0) != 0)
+  if ((w.pid > 0 && m_pidToGameName.contains(w.pid)) ||
+      (m_currentGameKey == key))
     return false; // already tracked under another spelling
   // Anything detection already has evidence for is not "undetected".
   if (GameIdentity::launcherAncestry(w.pid).launcher)
@@ -567,14 +581,14 @@ void GameDetectionService::reconcileRunningGames() {
     // graphics context, so the evidence providers can legitimately match it
     // — but recording Trophy itself is never the goal, and doing so looped
     // an authorize prompt on 2026-11-15.
-    if (w.pid <= 0 || w.pid == QCoreApplication::applicationPid())
+    if (w.pid > 0 && w.pid == QCoreApplication::applicationPid())
       continue;
     if (w.minimized || (!w.focused && !w.fullscreen))
       continue;
     QString name = w.appId;
     if (name.isEmpty())
       name = w.title;
-    if (name.isEmpty() || w.pid <= 0)
+    if (name.isEmpty())
       continue;
     const QString rawKey = w.appId.isEmpty() ? w.title : w.appId;
     // Resolve the display name before checking the veto: users can block
@@ -583,7 +597,12 @@ void GameDetectionService::reconcileRunningGames() {
     uint sid = steamAppIdForPid(w.pid);
     if (sid == 0)
       sid = steamAppIdFromAppId(rawKey);
-    const ReporterIdentity identity = reporterIdentity(w.pid, name, sid);
+    // Without a process there is no exe/argv to inspect: resolve from the
+    // compositor identity and the Steam app id alone, which is exactly the
+    // evidence a listing-only protocol can offer.
+    const ReporterIdentity identity =
+        w.pid > 0 ? reporterIdentity(w.pid, name, sid)
+                  : resolveReporterIdentity(name, QString(), {}, sid, QString());
     if (identity.ignored)
       continue;
     const QString key = sid > 0 ? QStringLiteral("steam_app_%1").arg(sid)
@@ -894,8 +913,23 @@ void GameDetectionService::promoteNextTrackedGame() {
 }
 
 void GameDetectionService::onLivenessTimeout() {
-  if (m_currentGamePid <= 0 || m_currentGameName.isEmpty())
+  if (m_currentGameName.isEmpty())
     return;
+  if (m_currentGamePid <= 0) {
+    // No PID to probe: the window is the process. Require three quiet ticks
+    // (15 s) so one empty/filtered snapshot cannot close a running game.
+    if (hasGameWindow()) {
+      m_windowMissCount = 0;
+      return;
+    }
+    if (++m_windowMissCount < 3)
+      return;
+    m_windowMissCount = 0;
+    qInfo() << "Tracked game window is gone:" << m_currentGameKey << "("
+            << m_currentGameName << ")- closing";
+    updateCurrentGame("", 0);
+    return;
+  }
   if (processExists(m_currentGamePid))
     return;
   qInfo() << "Tracked game process" << m_currentGamePid << "is gone ("
@@ -1010,8 +1044,14 @@ QList<qint64> GameDetectionService::gameplayWindowPids(const QString &key) const
     return {};
   }
   QList<qint64> candidates;
+  const QString normalizedKey = GameWhitelist::normalizeKey(key);
   for (const WindowInfo &w : m_monitor->windows()) {
-    if (w.pid <= 0 || m_pidToRawKey.value(w.pid) != key)
+    if (w.pid <= 0)
+      continue;
+    const QString windowKey = GameWhitelist::normalizeKey(
+        w.appId.isEmpty() ? w.title : w.appId);
+    if (m_pidToRawKey.value(w.pid) != key &&
+        (normalizedKey.isEmpty() || windowKey != normalizedKey))
       continue;
     if (!w.fullscreen && !coversOutput(w) &&
         !((w.outputWidth <= 0 || w.outputHeight <= 0) &&
@@ -1026,6 +1066,30 @@ QList<qint64> GameDetectionService::gameplayWindowPids(const QString &key) const
   return candidates;
 }
 
+bool GameDetectionService::windowBelongsToTrackedGame(
+    const WindowInfo &window) const {
+  if (m_currentGameName.isEmpty())
+    return false;
+  if (window.pid > 0) {
+    const auto byPid = m_pidToGameName.constFind(window.pid);
+    if (byPid != m_pidToGameName.constEnd() &&
+        byPid.value() == m_currentGameName)
+      return true;
+    const auto byKey = m_pidToRawKey.constFind(window.pid);
+    if (byKey != m_pidToRawKey.constEnd() &&
+        byKey.value() == GameWhitelist::normalizeKey(m_currentGameKey))
+      return true;
+  }
+  if (m_currentGameKey.isEmpty())
+    return false;
+  // PID-less tracking (listing-only protocols) identifies the game by the
+  // window's app id / title, the same key detection used to start it.
+  const QString tracked = GameWhitelist::normalizeKey(m_currentGameKey);
+  const QString windowKey = GameWhitelist::normalizeKey(
+      window.appId.isEmpty() ? window.title : window.appId);
+  return !tracked.isEmpty() && windowKey == tracked;
+}
+
 bool GameDetectionService::hasVisibleWindow() const {
   if (m_currentGameName.isEmpty())
     return false;
@@ -1037,7 +1101,7 @@ bool GameDetectionService::hasVisibleWindow() const {
     return m_currentGamePid > 0 && processExists(m_currentGamePid);
   }
   for (const WindowInfo &w : m_monitor->windows()) {
-    if (w.pid <= 0 || w.minimized)
+    if (w.minimized || !windowBelongsToTrackedGame(w))
       continue;
     // Any window the portal can capture counts. Windowed games (including
     // small clicker-style windows) are as valid a capture target as
@@ -1048,9 +1112,7 @@ bool GameDetectionService::hasVisibleWindow() const {
     if (w.width > 0 && w.height > 0 &&
         (w.width < kMinGameWindowWidth || w.height < kMinGameWindowHeight))
       continue;
-    const auto it = m_pidToGameName.find(w.pid);
-    if (it != m_pidToGameName.end() && it.value() == m_currentGameName)
-      return true;
+    return true;
   }
   return false;
 }
@@ -1059,11 +1121,9 @@ bool GameDetectionService::hasGameWindow() const {
   if (!m_monitor || m_currentGameName.isEmpty())
     return false;
   for (const WindowInfo &w : m_monitor->windows()) {
-    if (w.pid <= 0 || w.minimized)
+    if (w.minimized || !windowBelongsToTrackedGame(w))
       continue;
-    const auto it = m_pidToGameName.find(w.pid);
-    if (it != m_pidToGameName.end() && it.value() == m_currentGameName)
-      return true;
+    return true;
   }
   return false;
 }
@@ -1122,7 +1182,10 @@ void GameDetectionService::updateCurrentGame(const QString &gameName,
       gameName.isEmpty() ? QString() : (rawKey.isEmpty() ? gameName : rawKey);
 
   // Arm the liveness watchdog while a game is tracked; disarm on clear.
-  if (!gameName.isEmpty() && pid > 0) {
+  // A game with no PID is watched through its window instead (see
+  // onLivenessTimeout), so the timer runs either way.
+  m_windowMissCount = 0;
+  if (!gameName.isEmpty()) {
     if (!m_livenessTimer->isActive())
       m_livenessTimer->start();
   } else {

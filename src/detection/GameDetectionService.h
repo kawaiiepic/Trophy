@@ -62,7 +62,8 @@ public:
 
   // Getters for properties
   bool isGameRunning() const {
-    return m_currentGamePid > 0 && !m_currentGameName.isEmpty();
+    // A listing-only protocol can track a game without a process id.
+    return !m_currentGameName.isEmpty();
   }
   QString currentGameName() const { return m_currentGameName; }
   qint64 currentGamePid() const { return m_currentGamePid; }
@@ -93,6 +94,8 @@ public:
    * recording manager's hand-off retry instead of a size gate here.
    */
   Q_INVOKABLE bool hasVisibleWindow() const;
+  /** Whether a window row is the tracked game (by PID or by its identity). */
+  bool windowBelongsToTrackedGame(const WindowInfo &window) const;
   /**
    * @brief Whether any non-minimized compositor window exists for the game.
    *
@@ -310,6 +313,8 @@ private:
   bool m_running = false;
   QString m_currentGameName;
   qint64 m_currentGamePid = 0;
+  // Consecutive liveness ticks with no window for a PID-less game.
+  int m_windowMissCount = 0;
   // Stable match key: steam_app_<id>, executable path, Wine prefix +
   // game path, or a legacy reporter key when executable info is absent.
   QString m_currentGameKey;

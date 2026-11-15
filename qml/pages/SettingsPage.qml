@@ -1202,8 +1202,12 @@ Page {
                         label: detectionCard.trackingMode === "script"
                                || detectionCard.trackingMode === "helper"
                                ? qsTr("Game Window Helper (required)")
-                               : qsTr("Window tracking")
-                        help: detectionCard.trackingMode === "protocol"
+                               : (detectionCard.trackingMode === "x11"
+                                  ? qsTr("Window tracking (partial)")
+                                  : qsTr("Window tracking"))
+                        help: detectionCard.trackingMode === "x11"
+                              ? qsTr("This compositor exposes no Trophy window integration, so only X11/XWayland windows are visible. Steam and whitelisted games are still detected, including from their audio stream.")
+                              : detectionCard.trackingMode === "protocol"
                               ? qsTr("Read directly from the compositor's window-management protocol: window identity, focus and fullscreen state. Nothing is installed and no window contents are inspected.")
                               : (detectionCard.trackingMode === "tool"
                                  ? qsTr("Provided by the compositor's own tooling. No Trophy integration is installed.")
@@ -1227,6 +1231,7 @@ Page {
                             showAction: windowMonitor && !windowMonitor.trackingReady
                                         && detectionCard.trackingMode !== "protocol"
                                         && detectionCard.trackingMode !== "tool"
+                                        && detectionCard.trackingMode !== "x11"
                             healthy: windowMonitor && windowMonitor.trackingReady
                             attention: !healthy && !(windowMonitor && windowMonitor.trackingChecking)
                             text: {
@@ -1234,13 +1239,16 @@ Page {
                                     return "";
                                 if (windowMonitor.trackingReady)
                                     return detectionCard.trackingMode === "protocol" ? qsTr("Built in")
-                                         : (windowMonitor.compositorName === "kwin" ? qsTr("Installed · Working") : qsTr("Working"));
+                                         : (detectionCard.trackingMode === "x11" ? qsTr("X11 windows only")
+                                            : (windowMonitor.compositorName === "kwin" ? qsTr("Installed · Working") : qsTr("Working")));
                                 if (windowMonitor.trackingChecking)
                                     return qsTr("Checking…");
                                 if (detectionCard.trackingMode === "protocol")
                                     return qsTr("Connecting…");
                                 if (detectionCard.trackingMode === "tool")
                                     return qsTr("Unavailable");
+                                if (detectionCard.trackingMode === "x11")
+                                    return qsTr("X11 only");
                                 if (windowMonitor.compositorName === "kwin")
                                     return windowMonitor.kwinScriptInstalled
                                         ? (windowMonitor.kwinScriptEnabled ? qsTr("Installed · Not reporting") : qsTr("Installed · Disabled"))

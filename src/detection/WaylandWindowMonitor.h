@@ -23,6 +23,8 @@ namespace TrophyBackend {
 
 class KWinBackend;
 class KWinProtocolBackend;
+class WlrToplevelBackend;
+class XWaylandWindowBackend;
 class GnomeBackend;
 class HyprlandBackend;
 class SwayBackend;
@@ -95,6 +97,15 @@ public:
   void uninstallBackend();
 
   /**
+   * @brief Feed a supplementary PID/geometry snapshot.
+   *
+   * XWayland rows carry real PIDs for windows a listing-only protocol can
+   * only identify; they enrich the primary rows and add any window the
+   * primary did not list.
+   */
+  void ingestEnrichment(const QList<WindowInfo> &windows);
+
+  /**
    * @brief Feed a compositor snapshot (D-Bus entry point for backends).
    * Public so tests can drive the monitor without a compositor.
    *
@@ -134,6 +145,8 @@ private:
   friend class WindowMonitorWorkerTest;
   void setupCompositorTracking(bool repairBackend);
   void collectRetired();
+  /** Merge the primary and enrichment snapshots and publish the result. */
+  void publishWindows();
   struct Retired {
     std::shared_ptr<QObject> backend;
     std::future<void> poll;
@@ -153,6 +166,11 @@ private:
   QString m_compositor;
   std::shared_ptr<KWinBackend> m_kwin;
   std::shared_ptr<KWinProtocolBackend> m_kwinProtocol;
+  std::shared_ptr<WlrToplevelBackend> m_wlr;
+  std::shared_ptr<XWaylandWindowBackend> m_x11;
+  bool m_cliIsEnrichment = false;
+  QList<WindowInfo> m_primaryWindows;
+  QList<WindowInfo> m_enrichmentWindows;
   std::shared_ptr<GnomeBackend> m_gnome;
   std::shared_ptr<HyprlandBackend> m_hyprland;
   std::shared_ptr<SwayBackend> m_sway;

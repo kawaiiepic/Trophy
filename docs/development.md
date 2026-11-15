@@ -63,14 +63,35 @@ compositor API:
   compositor without the global, or a future Plasma that removes it), and
   Settings reports the mode through `windowTrackingMode`
   (`protocol`/`script`/`helper`/`tool`).
-- **`ToplevelRegistry`** — binds `ext-foreign-toplevel-list-v1` for a standard
-  window list (app_id/title/identifier, no PID/focus/fullscreen). KWin and
-  Mutter did not expose this global in 2026, so it is a fallback for
-  compositors that do rather than a replacement for their window backends.
-- The window protocol is a KDE implementation detail (its own XML warns
-  regular clients off), and `unmapped` means the window closed: the model
-  drops the row so detection, the picker and capture restoration never see a
-  ghost.
+- **`WlrToplevelBackend`** — binds `zwlr_foreign_toplevel_manager_v1`, which
+  the whole wlroots family (Sway, Hyprland, labwc, river, Wayfire, niri)
+  exposes: app_id, title and activated/fullscreen/minimized, event-driven.
+  It carries no PID or geometry, so it runs as the primary list and takes
+  both from an enrichment source.
+- **`XWaylandWindowBackend`** — X11 clients publish `_NET_WM_PID`, and the
+  compositor's XWM publishes `_NET_CLIENT_LIST`/`_NET_ACTIVE_WINDOW`. That is
+  the only desktop-agnostic window→process mapping, it needs no install, and
+  Proton/Wine games live there. `parseWindows()` is pure and unit-tested;
+  polls use a short-lived connection. `WindowMerge` then puts one row per
+  window: the primary row keeps its id/key and gains the PID, geometry and
+  output size it lacked. X11 runs only where the primary cannot supply PIDs
+  (wlroots and unsupported compositors), never on KDE/GNOME.
+- **No PID is not a dead end.** `GameDetectionService` tracks a game by its
+  window identity when no process is known: detection uses app-id evidence
+  (`steam_app_<id>`, whitelist, desktop entry), `hasVisibleWindow()` and
+  `gameplayWindowPids()` match windows by that identity, and the liveness
+  watchdog waits for three quiet ticks (15 s) of the window disappearing
+  instead of probing `/proc`. Capture then falls back to name-based audio
+  lookup. `windowForPid()` refuses pid 0 so an anonymous row cannot be
+  mistaken for a process match.
+- **`ToplevelRegistry`** — binds `ext-foreign-toplevel-list-v1`, the portable
+  *listing-only* standard (app_id/title/identifier, no PID/focus/fullscreen).
+  KWin and Mutter did not expose this global in 2026, so it remains a
+  building block for compositors that do rather than a replacement for the
+  backends above.
+- The KDE protocol is an implementation detail (its own XML warns regular
+  clients off), and `unmapped` means the window closed: the model drops the
+  row so detection, the picker and capture restoration never see a ghost.
 
 Whitelist changes trigger `reconcileRunningGames()` immediately, so a manual
 Games-page add takes effect without waiting for the next compositor snapshot.

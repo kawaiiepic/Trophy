@@ -8,14 +8,11 @@
 #include "KWinProtocolBackend.h"
 
 #include "PlasmaToplevelModel.h"
+#include "WindowOutputSize.h"
 
-#include <QCoreApplication>
 #include <QDebug>
-#include <QGuiApplication>
 #include <QHash>
 #include <QList>
-#include <QPoint>
-#include <QScreen>
 #include <QSize>
 #include <QSocketNotifier>
 #include <QTimer>
@@ -71,19 +68,6 @@ namespace {
 
 using BackendPrivate = KWinProtocolBackend::Private;
 using WindowData = KWinProtocolBackend::Private::WindowData;
-
-/** Logical size of the output containing a point, when Qt knows it. */
-QSize outputSizeAt(int x, int y) {
-  if (!qobject_cast<QGuiApplication *>(QCoreApplication::instance()))
-    return {};
-  const QPoint point(x, y);
-  const auto screens = QGuiApplication::screens();
-  for (QScreen *screen : screens) {
-    if (screen && screen->geometry().contains(point))
-      return screen->geometry().size();
-  }
-  return {};
-}
 
 WindowData *dataFor(void *data) {
   auto *w = static_cast<WindowData *>(data);
@@ -557,7 +541,7 @@ bool KWinProtocolBackend::hasSnapshot() const { return d->hasSnapshot; }
 
 QList<WindowInfo> KWinProtocolBackend::windows() const {
 #ifdef HAVE_WAYLAND_TOPLEVEL
-  return d->model.snapshot(&outputSizeAt);
+  return d->model.snapshot(&outputSizeAtPoint);
 #else
   return {};
 #endif

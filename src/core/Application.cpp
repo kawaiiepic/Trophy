@@ -1636,10 +1636,14 @@ QString Application::restoreTokenForGame(const QString &game) const {
 }
 
 bool Application::isCurrentCaptureGame(const QString &game) const {
-  return !game.isEmpty() && m_gameDetector &&
-         m_gameDetector->currentGameName() == game &&
-         GameDetectionService::processExists(m_gameDetector->currentGamePid()) &&
-         !isGameBlocked(game);
+  if (game.isEmpty() || !m_gameDetector ||
+      m_gameDetector->currentGameName() != game || isGameBlocked(game))
+    return false;
+  const qint64 pid = m_gameDetector->currentGamePid();
+  // A game tracked without a PID (listing-only window protocol) is watched
+  // through its window: the detector closes it when the window disappears,
+  // so tracking itself is the liveness signal.
+  return pid <= 0 || GameDetectionService::processExists(pid);
 }
 
 void Application::blockGame(const QString &game) {

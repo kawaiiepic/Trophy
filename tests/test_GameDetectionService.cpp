@@ -2303,3 +2303,122 @@ TEST_F(GameDetectionServiceTest, NeverDetectsTrophysOwnWindow) {
 }
 
 } // namespace TrophyBackend
+
+namespace TrophyBackend {
+
+// ---------------------------------------------------------------------------
+// PID-less tracking: a listing-only window protocol (wlr-foreign-toplevel)
+// reports identity and state but no process. Detection, liveness and capture
+// gating must work from the window alone.
+// ---------------------------------------------------------------------------
+
+TEST_F(GameDetectionServiceTest, PidlessSteamWindowDetectsFromItsAppId) {
+  QSignalSpy detectSpy(service.get(), &GameDetectionService::gameDetected);
+  WindowInfo w;
+  w.id = 7001;
+  w.key = "wlr:1";
+  w.appId = "steam_app_1422450";
+  w.title = "Deadlock";
+  w.pid = 0;
+  w.focused = true;
+  w.fullscreen = true;
+  monitor.ingestSnapshot({w});
+  pump(200);
+
+  ASSERT_EQ(detectSpy.count(), 1);
+  EXPECT_TRUE(service->isGameRunning());
+  EXPECT_EQ(service->currentGamePid(), 0);
+  EXPECT_TRUE(service->currentGameKey().startsWith("steam_app_"));
+  // The watchdog runs for window-tracked games too.
+  EXPECT_TRUE(livenessTimerActive());
+}
+
+TEST_F(GameDetectionServiceTest, PidlessWhitelistedWindowDetects) {
+  service->addToWhitelist("clicker", "Clicker");
+  QSignalSpy detectSpy(service.get(), &GameDetectionService::gameDetected);
+  WindowInfo w;
+  w.id = 7002;
+  w.key = "wlr:2";
+  w.appId = "clicker";
+  w.title = "Clicker";
+  w.pid = 0;
+  w.focused = true;
+  w.width = 640;
+  w.height = 480;
+  monitor.ingestSnapshot({w});
+  pump(200);
+
+  ASSERT_EQ(detectSpy.count(), 1);
+  EXPECT_EQ(service->currentGameName(), "Clicker");
+  EXPECT_EQ(service->currentGamePid(), 0);
+}
+
+TEST_F(GameDetectionServiceTest, PidlessGameStaysAliveWhileItsWindowIsPresent) {
+  WindowInfo w;
+  w.id = 7003;
+  w.key = "wlr:3";
+  w.appId = "steam_app_1";
+  w.title = "Game";
+  w.pid = 0;
+  w.focused = true;
+  w.fullscreen = true;
+  monitor.ingestSnapshot({w});
+  pump(200);
+  ASSERT_TRUE(service->isGameRunning());
+
+  for (int i = 0; i < 5; ++i) {
+    monitor.ingestSnapshot({w});
+    pump(20);
+    livenessTimeout();
+    EXPECT_TRUE(service->isGameRunning()) << "tick " << i;
+  }
+}
+
+TEST_F(GameDetectionServiceTest, PidlessGameClosesAfterThreeQuietLivenessTicks) {
+  QSignalSpy closedSpy(service.get(), &GameDetectionService::gameClosed);
+  WindowInfo w;
+  w.id = 7004;
+  w.key = "wlr:4";
+  w.appId = "steam_app_2";
+  w.title = "Game";
+  w.pid = 0;
+  w.focused = true;
+  w.fullscreen = true;
+  monitor.ingestSnapshot({w});
+  pump(200);
+  ASSERT_TRUE(service->isGameRunning());
+
+  // A single empty snapshot (focus moved, list churn) must not close it.
+  monitor.ingestSnapshot({});
+  pump(50);
+  livenessTimeout();
+  livenessTimeout();
+  EXPECT_TRUE(service->isGameRunning());
+  livenessTimeout();
+  EXPECT_FALSE(service->isGameRunning());
+  EXPECT_EQ(closedSpy.count(), 1);
+  EXPECT_FALSE(livenessTimerActive());
+}
+
+TEST_F(GameDetectionServiceTest, PidlessGameHasAVisibleWindowUntilItDisappears) {
+  WindowInfo w;
+  w.id = 7005;
+  w.key = "wlr:5";
+  w.appId = "steam_app_3";
+  w.title = "Game";
+  w.pid = 0;
+  w.focused = true;
+  w.fullscreen = true;
+  monitor.ingestSnapshot({w});
+  pump(200);
+  ASSERT_TRUE(service->isGameRunning());
+  EXPECT_TRUE(service->hasVisibleWindow());
+  EXPECT_TRUE(service->hasGameWindow());
+
+  monitor.ingestSnapshot({});
+  pump(50);
+  EXPECT_FALSE(service->hasVisibleWindow());
+  EXPECT_FALSE(service->hasGameWindow());
+}
+
+} // namespace TrophyBackend
