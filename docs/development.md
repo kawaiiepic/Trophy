@@ -56,6 +56,9 @@ compositor API:
   Mutter did not expose this global in 2026, so it is a fallback for
   compositors that do rather than a replacement for their window backends.
 
+Whitelist changes trigger `reconcileRunningGames()` immediately, so a manual
+Games-page add takes effect without waiting for the next compositor snapshot.
+
 The corresponding rule set is `DetectionPolicy`; new sources should feed it
 evidence instead of adding another ad-hoc confidence branch. Provenance
 (launcher ancestry, game desktop entry) only counts once the window
@@ -82,7 +85,9 @@ The notice itself never starts a capture; only Add does, and only within the
 user's recording settings. It is resident (no timeout) like the "New Game"
 prompt, so it cannot auto-hide while a game is fullscreen, is capped at three
 offers per launch with a 20 s spacing floor, and skips anything detection
-already has evidence for.
+already has evidence for. The window must also have stayed put for a few
+seconds (`m_hintMinAgeMs`, 4 s) so focus-stealing dialogs and splashes never
+qualify; windows that disappear restart that clock.
 
 ## Dependencies
 

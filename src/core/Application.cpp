@@ -2149,8 +2149,9 @@ void Application::handleDiscoveryHintAction(const QString &action) {
   // treat it as a game now instead of asking the user to pick it again in the
   // Add Game dialog. No navigation: the user stays where they are.
   if (m_gameDetector && !appId.isEmpty()) {
+    // The service reconciles on whitelistChanged, so detection has already
+    // run by the time this returns.
     m_gameDetector->addToWhitelist(appId, title.isEmpty() ? appId : title);
-    m_gameDetector->reconcileRunningGames();
     const QString game = m_gameDetector->currentGameName();
     if (!game.isEmpty() && isCurrentCaptureGame(game)) {
       // The click is the authorization decision: retire the prompt detection

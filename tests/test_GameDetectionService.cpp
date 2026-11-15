@@ -272,6 +272,12 @@ protected:
   void detachWindowMonitor() { service->setWindowMonitor(nullptr); }
   // TEST_F bodies are not friends; the fixture class is.
   void setHintSpacing(qint64 ms) { service->m_hintSpacingMs = ms; }
+  void setHintMinAge(qint64 ms) { service->m_hintMinAgeMs = ms; }
+  // Pretend the window has already been visible for its minimum age.
+  void ageHintFirstSeen(const QString &key) {
+    service->m_hintFirstSeen.insert(
+        key, service->m_uptimeClock.elapsed() - service->m_hintMinAgeMs - 1);
+  }
   void ageSteamVerdict(qint64 pid, bool verdict, bool expired) {
     service->m_steamCheckCache.insert(
         pid, qMakePair(verdict, service->m_uptimeClock.elapsed() -
@@ -1237,6 +1243,7 @@ TEST_F(GameDetectionServiceTest, HintOfferedForUnknownFullscreenWindow) {
   // Discovery hint: a fullscreen window with no evidence at all. Nobody
   // claims it, so the user is offered the Games page — no capture starts.
   setHintSpacing(0);
+  setHintMinAge(0);
   QProcess child;
   child.start("sleep", {"30"});
   ASSERT_TRUE(child.waitForStarted(5000));
@@ -1269,6 +1276,7 @@ TEST_F(GameDetectionServiceTest, HintNotOfferedForKnownNonGameApp) {
   // An installed application is never a hint: the desktop entry says what
   // it is (a player, browser, …), so fullscreen video stays silent.
   setHintSpacing(0);
+  setHintMinAge(0);
   DesktopEntryFixture entries;
   ASSERT_TRUE(entries.valid);
   ASSERT_TRUE(entries.write("mystery-game", "mpv", "AudioVideo;Video;Player;"));
@@ -1299,6 +1307,7 @@ TEST_F(GameDetectionServiceTest, HintOffersWindowedGamesToo) {
   // Discovery must not be gated on size: clicker/small-window titles that
   // no provider knows are exactly what the Games page offer is for.
   setHintSpacing(0);
+  setHintMinAge(0);
   QProcess child;
   child.start("sleep", {"30"});
   ASSERT_TRUE(child.waitForStarted(5000));
@@ -1346,6 +1355,7 @@ TEST_F(GameDetectionServiceTest, HintOffersWindowedGamesToo) {
 TEST_F(GameDetectionServiceTest, HintIsRateLimitedPerLaunch) {
   // A handful per launch, never a notification per window snapshot.
   setHintSpacing(0);
+  setHintMinAge(0);
   QProcess child;
   child.start("sleep", {"30"});
   ASSERT_TRUE(child.waitForStarted(5000));
@@ -1368,6 +1378,59 @@ TEST_F(GameDetectionServiceTest, HintIsRateLimitedPerLaunch) {
   child.kill();
   child.waitForFinished(5000);
   EXPECT_EQ(hintSpy.count(), 3); // m_hintMax
+}
+
+TEST_F(GameDetectionServiceTest, HintWaitsForASustainedWindow) {
+  // A transient dialog (focus stealing file picker, splash) can be focused
+  // and sane for a moment: the offer waits for the window to stay put.
+  setHintSpacing(0);
+  setHintMinAge(5000);
+  QProcess child;
+  child.start("sleep", {"30"});
+  ASSERT_TRUE(child.waitForStarted(5000));
+  const qint64 pid = child.processId();
+  ASSERT_TRUE(waitForChildExec(pid));
+
+  QSignalSpy hintSpy(service.get(), &GameDetectionService::undiscoveredGameSeen);
+  WindowInfo w;
+  w.id = 6301;
+  w.appId = "mystery-game";
+  w.title = "Mystery Game";
+  w.pid = pid;
+  w.focused = true;
+  w.fullscreen = true;
+  monitor.ingestSnapshot({w});
+  pump(200);
+  EXPECT_EQ(hintSpy.count(), 0); // first sighting only starts the clock
+
+  ageHintFirstSeen("mystery-game");
+  monitor.ingestSnapshot({w});
+  pump(200);
+  EXPECT_EQ(hintSpy.count(), 1);
+
+  child.kill();
+  child.waitForFinished(5000);
+}
+
+TEST_F(GameDetectionServiceTest, WhitelistChangeDetectsWithoutANewSnapshot) {
+  // Manual "Add Game" must take effect immediately instead of waiting for
+  // the compositor to publish another snapshot.
+  QSignalSpy detectSpy(service.get(), &GameDetectionService::gameDetected);
+  WindowInfo w;
+  w.id = 6401;
+  w.appId = "manual-add-game";
+  w.title = "Manual Add Game";
+  w.pid = fakeGamePid();
+  w.focused = true;
+  w.fullscreen = true;
+  monitor.ingestSnapshot({w});
+  pump(200);
+  ASSERT_EQ(detectSpy.count(), 0); // no evidence yet
+
+  EXPECT_TRUE(service->addToWhitelist("manual-add-game", "Manual Add Game"));
+  pump(200);
+  ASSERT_EQ(detectSpy.count(), 1);
+  EXPECT_EQ(service->currentGameName(), "Manual Add Game");
 }
 
 TEST_F(GameDetectionServiceTest, SteamAppIdFromAppIdParses) {

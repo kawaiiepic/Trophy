@@ -73,6 +73,12 @@ GameDetectionService::GameDetectionService(QObject *parent)
           &GameDetectionService::rebuildModels);
   connect(this, &GameDetectionService::whitelistChanged, this,
           &GameDetectionService::rebuildModels);
+  // A newly whitelisted game must detect without waiting for the next
+  // compositor snapshot: manual Add Game used to sit idle until focus moved.
+  connect(this, &GameDetectionService::whitelistChanged, this, [this]() {
+    if (m_currentGameName.isEmpty())
+      reconcileRunningGames();
+  });
   connect(this, &GameDetectionService::blacklistChanged, this,
           &GameDetectionService::rebuildModels);
   connect(this, &GameDetectionService::tokenGamesChanged, this,
@@ -503,20 +509,38 @@ void GameDetectionService::hintUndetectedGame() {
   const qint64 now = m_uptimeClock.elapsed();
   if (m_lastHintAt >= 0 && now - m_lastHintAt < m_hintSpacingMs)
     return;
+  QSet<QString> visible;
   for (const WindowInfo &w : m_monitor->windows()) {
     if (!isUndetectedGameCandidate(w))
       continue;
     const QString hintKey = w.appId.isEmpty() ? w.title : w.appId;
+    visible.insert(hintKey);
     if (m_hintedKeys.contains(hintKey))
+      continue;
+    // A transient dialog (file picker, splash, dialog) can be focused and
+    // sane for a moment. Wait until the window has stayed put.
+    const auto first = m_hintFirstSeen.constFind(hintKey);
+    if (first == m_hintFirstSeen.constEnd())
+      m_hintFirstSeen.insert(hintKey, now);
+    // A zero age (tests, or a future setting) offers on first sighting.
+    if (m_hintMinAgeMs > 0 &&
+        now - m_hintFirstSeen.value(hintKey) < m_hintMinAgeMs)
       continue;
     m_hintedKeys.insert(hintKey);
     ++m_hintCount;
     m_lastHintAt = now;
-    qInfo() << "Undetected fullscreen window:" << hintKey
+    qInfo() << "Undetected game-like window:" << hintKey
             << "(PID:" << w.pid << ")- offering the Games page";
     emit undiscoveredGameSeen(hintKey, w.title.isEmpty() ? hintKey : w.title,
                               w.pid);
     return; // one offer per snapshot
+  }
+  // Forget windows that went away so a later reopen starts a fresh clock.
+  for (auto it = m_hintFirstSeen.begin(); it != m_hintFirstSeen.end();) {
+    if (!visible.contains(it.key()))
+      it = m_hintFirstSeen.erase(it);
+    else
+      ++it;
   }
 }
 

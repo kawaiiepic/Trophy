@@ -12,6 +12,7 @@
 #include <QElapsedTimer>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QHash>
 #include <QMap>
 #include <QObject>
 #include <QSet>
@@ -372,6 +373,11 @@ private:
   // Discovery-hint bookkeeping (see undiscoveredGameSeen): keys already
   // offered this launch, how many were offered, and when the last one was.
   QSet<QString> m_hintedKeys;
+  // First moment each candidate window was seen. A transient dialog can be
+  // focused and sane for a moment, so an offer waits for the window to stay
+  // put; entries are dropped as soon as the window disappears.
+  QHash<QString, qint64> m_hintFirstSeen;
+  qint64 m_hintMinAgeMs = 4000;
   int m_hintCount = 0;
   qint64 m_lastHintAt = -1;
   // Tuned for a human: a couple per launch, spaced out. Tests lower these
