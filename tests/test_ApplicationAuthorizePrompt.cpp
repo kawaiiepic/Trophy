@@ -13,6 +13,7 @@
 #include <QDir>
 #include <QFile>
 #include <QElapsedTimer>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <gtest/gtest.h>
@@ -135,6 +136,14 @@ protected:
     app.m_pendingWindowGame.clear();
     app.m_windowWaitTimer->stop();
   }
+  void setDiscoveryHint(const QString &appId, const QString &title) {
+    app.m_discoveryHintAppId = appId;
+    app.m_discoveryHintTitle = title;
+  }
+  bool discoveryAppBlocked(const QString &appId) {
+    return app.m_gameDetector->isBlocked(appId);
+  }
+  bool discoveryHintCleared() const { return app.m_discoveryHintTitle.isEmpty(); }
   // The retry is deferred so the compositor can publish the replacement
   // window; pump events until the window wait is armed again.
   bool waitForWindowRetry(const QString &game, int timeoutMs = 2000) {
@@ -376,4 +385,25 @@ TEST_F(ApplicationAuthorizePromptTest, CaptureStartLossReArmsTheWindowWait) {
   captureStartLost("Launcher Game", "steam_app_777");
   EXPECT_FALSE(waitForWindowRetry("Launcher Game", 900));
   clearWindowPending();
+}
+
+TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintBlockVetoesTheApp) {
+  // "Block" on the discovery hint is a persistent veto: the app lands on the
+  // Games page's Blocked pole and the hint can never fire for it again.
+  setDiscoveryHint("mystery-app", "Mystery App");
+  app.handleDiscoveryHintAction("block-app");
+  EXPECT_TRUE(discoveryAppBlocked("mystery-app"));
+  EXPECT_TRUE(app.pendingAddGameQuery().isEmpty());
+  EXPECT_TRUE(discoveryHintCleared());
+}
+
+TEST_F(ApplicationAuthorizePromptTest, DiscoveryHintAddRequestsTheGamesPage) {
+  setDiscoveryHint("mystery-app", "Mystery App");
+  QSignalSpy pageSpy(&app, &Application::gamesPageRequested);
+  app.handleDiscoveryHintAction("add-game");
+  EXPECT_EQ(app.pendingAddGameQuery(), QString("Mystery App"));
+  EXPECT_EQ(pageSpy.count(), 1);
+  EXPECT_TRUE(discoveryHintCleared());
+  app.clearPendingAddGameQuery();
+  EXPECT_TRUE(app.pendingAddGameQuery().isEmpty());
 }

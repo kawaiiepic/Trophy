@@ -129,6 +129,20 @@ void NotificationService::showNotification(const QString &title,
                    actionId, actionLabel);
 }
 
+void NotificationService::showDiscoveryHint(const QString &appId,
+                                            const QString &title) {
+  const QString name = title.isEmpty() ? appId : title;
+  sendNotification(
+      QStringLiteral("Suspected game"),
+      QStringLiteral("\"%1\" looks like a game. Add it so Trophy can record it "
+                     "automatically and label its audio, or Block it if it is "
+                     "not a game.")
+          .arg(name),
+      "trophy", 8000, 1, false, true, QStringLiteral("add-game"),
+      QStringLiteral("Add to Games"), QStringLiteral("block-app"),
+      QStringLiteral("Block"));
+}
+
 void NotificationService::showQueuedNotification(
     const QString &title, const QString &body, const QString &icon,
     int timeout, int urgency) {
@@ -245,7 +259,9 @@ void NotificationService::sendNotification(const QString &title,
                                            int urgency, bool authorizeAction,
                                            bool replacePrevious,
                                            const QString &actionId,
-                                           const QString &actionLabel) {
+                                           const QString &actionLabel,
+                                           const QString &secondaryActionId,
+                                           const QString &secondaryActionLabel) {
   if (!m_enabled) {
     return;
   }
@@ -280,7 +296,11 @@ void NotificationService::sendNotification(const QString &title,
   if (!authorizeAction && !actionId.isEmpty() &&
       !actionLabel.isEmpty()) {
     actions << actionId << actionLabel;
-    if (actionId == QStringLiteral("show-attention"))
+    if (!secondaryActionId.isEmpty() && !secondaryActionLabel.isEmpty())
+      actions << secondaryActionId << secondaryActionLabel;
+    if (actionId == QStringLiteral("show-attention") ||
+        actionId == QStringLiteral("block-app") ||
+        secondaryActionId == QStringLiteral("block-app"))
       actions << "default" << "";
   }
 

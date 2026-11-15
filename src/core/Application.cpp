@@ -754,12 +754,7 @@ void Application::connectSignals() {
             m_discoveryHintTitle = title;
             qCInfo(appLog) << "Offering to add undetected window" << appId
                            << "(PID:" << pid << ")";
-            m_notificationService->showNotification(
-                QStringLiteral("Add %1 to Games?").arg(title),
-                QStringLiteral("Trophy can record %1 automatically and label its "
-                               "audio. Click to add it to your Games list.")
-                    .arg(title),
-                "trophy", 8000, 1, false, "add-game", "Add to Games");
+            m_notificationService->showDiscoveryHint(appId, title);
           });
   // Approval is derived from portal restore tokens: whenever the token
   // map changes, push the holding games to the detector so the Games
@@ -1093,24 +1088,17 @@ void Application::connectSignals() {
               m_notificationService->closeLastNotification();
               return;
             }
-            // Discovery hint: open the Games page with the Add Game dialog
-            // prefilled for the window the notice named. Never starts
-            // capture; adding the game goes through the normal Games page
-            // path. Body clicks arrive as "default" on daemons that support
-            // it, so both ids are accepted while a hint is pending.
+            // Discovery hint: "Add to Games" opens the Games page with the
+            // Add Game dialog prefilled; "Block" vetoes the app so the offer
+            // never repeats. Body clicks arrive as "default" on daemons that
+            // support it, so both ids are accepted while a hint is pending.
             if (action == QStringLiteral("add-game") ||
+                action == QStringLiteral("block-app") ||
                 (action == QStringLiteral("default") &&
                  !m_discoveryHintTitle.isEmpty())) {
-              const QString hintTitle = m_discoveryHintTitle;
-              m_discoveryHintAppId.clear();
-              m_discoveryHintTitle.clear();
-              m_notificationService->closeLastNotification();
-              if (!hintTitle.isEmpty()) {
-                showMainWindow();
-                emit gamesPageRequested();
-                m_pendingAddGameQuery = hintTitle;
-                emit pendingAddGameQueryChanged();
-              }
+              handleDiscoveryHintAction(action == QStringLiteral("default")
+                                            ? QStringLiteral("add-game")
+                                            : action);
               return;
             }
             // Three-way authorize prompt: "authorize" starts capture and
@@ -2091,6 +2079,30 @@ void Application::clearPendingAddGameQuery() {
   if (m_pendingAddGameQuery.isEmpty())
     return;
   m_pendingAddGameQuery.clear();
+  emit pendingAddGameQueryChanged();
+}
+
+void Application::handleDiscoveryHintAction(const QString &action) {
+  const QString appId = m_discoveryHintAppId;
+  const QString title = m_discoveryHintTitle;
+  m_discoveryHintAppId.clear();
+  m_discoveryHintTitle.clear();
+  if (m_notificationService)
+    m_notificationService->closeLastNotification();
+  if (appId.isEmpty() && title.isEmpty())
+    return;
+  // Block: a persistent veto, exactly like the Games page's Block pole, so
+  // an app that is not a game is never offered again. It stays visible (and
+  // reversible) under Blocked in the Games list.
+  if (action == QStringLiteral("block-app")) {
+    if (m_gameDetector && !appId.isEmpty())
+      m_gameDetector->addToBlacklist(appId);
+    return;
+  }
+  const QString query = title.isEmpty() ? appId : title;
+  showMainWindow();
+  emit gamesPageRequested();
+  m_pendingAddGameQuery = query;
   emit pendingAddGameQueryChanged();
 }
 

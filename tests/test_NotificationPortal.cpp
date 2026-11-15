@@ -228,6 +228,24 @@ TEST_F(NotificationPortalTest, CaptureHintReplacesPromptAndWithdrawsOnCompletion
   EXPECT_EQ(counts().value(0).toInt(), 0);
 }
 
+TEST_F(NotificationPortalTest, DiscoveryHintNamesTheAppAndOffersAddAndBlock) {
+  if (!startFake()) GTEST_SKIP() << "requires private dbus-run-session bus";
+  TrophyBackend::NotificationService notifications;
+  notifications.showDiscoveryHint("mystery-app", "Mystery App");
+  ASSERT_TRUE(waitUntil([] { return counts().value(5).toInt() == 1; }));
+  const auto notice = lastNotice();
+  ASSERT_EQ(notice.size(), 8);
+  EXPECT_EQ(notice[3].toString(), "Suspected game");
+  EXPECT_TRUE(notice[4].toString().contains("Mystery App"));
+  // Block is a persistent veto, so it ships alongside Add; a body click
+  // ("default") is Add, and a bare close is a dismissal.
+  EXPECT_EQ(qdbus_cast<QStringList>(notice[5]),
+            (QStringList{"add-game", "Add to Games", "block-app", "Block",
+                         "default", ""}));
+  EXPECT_FALSE(qdbus_cast<QVariantMap>(notice[6]).value("resident").toBool());
+  EXPECT_EQ(notice[7].toInt(), 8000);
+}
+
 TEST_F(NotificationPortalTest, AttentionIsIndependentAndOnlyExplicitClickRequestsWindow) {
   if (!startFake()) GTEST_SKIP() << "requires private dbus-run-session bus";
   TrophyBackend::NotificationService notifications;

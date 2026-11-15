@@ -55,6 +55,18 @@ public:
   Q_INVOKABLE void showRecordingStopped(const QString &summary);
   Q_INVOKABLE void showError(const QString &message);
 
+  /**
+   * @brief Discovery hint for a window that looks like a game but has no
+   * detection evidence yet.
+   *
+   * Two buttons: "Add to Games" (add-game) and "Block" (block-app), so an
+   * app that is not a game can be permanently vetoed instead of re-offered.
+   * Body-click counts as "Add to Games". Titled "Suspected game" so it reads
+   * as an offer, never as a detected game.
+   */
+  Q_INVOKABLE void showDiscoveryHint(const QString &appId,
+                                     const QString &title);
+
   // Separate ownership: attention must not replace capture authorization or
   // lose its click action when a recording/clip notice arrives.
   Q_INVOKABLE void showAttention(const QString &reason);
@@ -154,7 +166,9 @@ private:
                         const QString &icon, int timeout, int urgency,
                         bool authorizeAction, bool replacePrevious,
                         const QString &actionId = QString(),
-                        const QString &actionLabel = QString());
+                        const QString &actionLabel = QString(),
+                        const QString &secondaryActionId = QString(),
+                        const QString &secondaryActionLabel = QString());
   // Duplicate check shared by the immediate and queued paths: drops
   // identical title+body within the cooldown, otherwise records this
   // notice as the last sent. Returns true when suppressed.

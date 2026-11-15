@@ -149,6 +149,9 @@ public:
   Q_INVOKABLE void openUpdateDialog();
   Q_INVOKABLE void clearPendingAddGameQuery();
   QString pendingAddGameQuery() const { return m_pendingAddGameQuery; }
+  // Notification actions for the discovery hint: "add-game" opens the Games
+  // page with the dialog prefilled, "block-app" vetoes the app.
+  void handleDiscoveryHintAction(const QString &action);
   Q_INVOKABLE QVariantMap captureHealth() const;
   // Track mute that follows the active pipeline (the dashboard meters).
   // The recording and the DVR own different mixers; muting only one

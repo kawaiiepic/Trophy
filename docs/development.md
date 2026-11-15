@@ -60,10 +60,12 @@ count; without provenance a window is never game evidence on its own.
 
 When a focused fullscreen window has *no* evidence and its app id has no
 installed desktop entry at all, `GameDetectionService::undiscoveredGameSeen`
-fires instead of silently ignoring it. Application offers "Add <app> to
-Games?", which opens the Games page with the Add Game dialog prefilled. It
-never starts a capture, is capped at three offers per launch with a 20 s
-spacing floor, and skips anything detection already has evidence for.
+fires instead of silently ignoring it. Application shows a **"Suspected game"**
+notification naming the app: **Add to Games** opens the Games page with the
+Add Game dialog prefilled, **Block** adds the app to the Games page's Blocked
+pole so the offer never repeats, and a bare close is a dismissal. It never
+starts a capture, is capped at three offers per launch with a 20 s spacing
+floor, and skips anything detection already has evidence for.
 
 ## Dependencies
 
