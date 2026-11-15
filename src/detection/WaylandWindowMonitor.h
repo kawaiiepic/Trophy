@@ -22,6 +22,7 @@
 namespace TrophyBackend {
 
 class KWinBackend;
+class KWinProtocolBackend;
 class GnomeBackend;
 class HyprlandBackend;
 class SwayBackend;
@@ -45,6 +46,12 @@ class WaylandWindowMonitor : public QObject {
   Q_PROPERTY(bool kwinScriptInstalled READ kwinScriptInstalled NOTIFY windowsChanged)
   Q_PROPERTY(bool kwinScriptEnabled READ kwinScriptEnabled NOTIFY windowsChanged)
   Q_PROPERTY(bool kwinActive READ kwinActive NOTIFY windowsChanged)
+  /**
+   * How window state is obtained on this desktop: "protocol" (a compositor
+   * protocol, nothing installed), "script"/"helper" (an installed
+   * integration), "tool" (a compositor CLI) or empty when unavailable.
+   */
+  Q_PROPERTY(QString windowTrackingMode READ windowTrackingMode NOTIFY windowsChanged)
   Q_PROPERTY(bool trackingReady READ trackingReady NOTIFY windowsChanged)
   Q_PROPERTY(bool trackingChecking READ trackingChecking NOTIFY windowsChanged)
   Q_PROPERTY(QString gnomeHelperStatus READ gnomeHelperStatus NOTIFY windowsChanged)
@@ -75,6 +82,7 @@ public:
   bool kwinScriptInstalled() const;
   bool kwinScriptEnabled() const;
   bool kwinActive() const;
+  QString windowTrackingMode() const;
   bool trackingReady() const;
   QString gnomeHelperStatus() const;
   bool gnomeHelperInstalled() const;
@@ -144,6 +152,7 @@ private:
   bool m_lastTrackingReady = false;
   QString m_compositor;
   std::shared_ptr<KWinBackend> m_kwin;
+  std::shared_ptr<KWinProtocolBackend> m_kwinProtocol;
   std::shared_ptr<GnomeBackend> m_gnome;
   std::shared_ptr<HyprlandBackend> m_hyprland;
   std::shared_ptr<SwayBackend> m_sway;

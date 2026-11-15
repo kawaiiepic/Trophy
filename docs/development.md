@@ -51,10 +51,26 @@ compositor API:
 - **Window context** — `WaylandWindowMonitor` still supplies focus,
   fullscreen/coverage, geometry and the window picker. It is optional
   enrichment for detection, not the source of identity.
+- **`KWinProtocolBackend`** — on Plasma, binds
+  `org_kde_plasma_window_management` (v17+) directly and reads app_id, title,
+  pid, active/minimized/fullscreen state and geometry from the compositor.
+  KWin 6.8 advertises this global to ordinary clients but implements neither
+  `ext-foreign-toplevel-list-v1` nor `zwlr_foreign_toplevel-management`, so it
+  is the only script-free KDE path. `PlasmaToplevelModel` owns the event
+  ordering (initial batch, duplicate uuid announcements, close), so the state
+  machine is unit-tested without a compositor. The bundled KWin script stays
+  as the fallback: it is used whenever `start()` cannot bind (not KDE, a
+  compositor without the global, or a future Plasma that removes it), and
+  Settings reports the mode through `windowTrackingMode`
+  (`protocol`/`script`/`helper`/`tool`).
 - **`ToplevelRegistry`** — binds `ext-foreign-toplevel-list-v1` for a standard
   window list (app_id/title/identifier, no PID/focus/fullscreen). KWin and
   Mutter did not expose this global in 2026, so it is a fallback for
   compositors that do rather than a replacement for their window backends.
+- The window protocol is a KDE implementation detail (its own XML warns
+  regular clients off), and `unmapped` means the window closed: the model
+  drops the row so detection, the picker and capture restoration never see a
+  ghost.
 
 Whitelist changes trigger `reconcileRunningGames()` immediately, so a manual
 Games-page add takes effect without waiting for the next compositor snapshot.

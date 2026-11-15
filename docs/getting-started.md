@@ -102,7 +102,7 @@ guidance rather than assuming every codec ships with the native package.
 
 | Desktop | Window helper | Global shortcuts | Tray |
 | --- | --- | --- | --- |
-| **KDE Plasma (KWin)** | Bundled `trophy-monitor` KWin script | Portal `GlobalShortcuts` | Built in |
+| **KDE Plasma (KWin)** | Built in (compositor window protocol) | Portal `GlobalShortcuts` | Built in |
 | **GNOME (Mutter)** | Bundled Trophy Window Helper extension | Portal `GlobalShortcuts` | Needs the AppIndicator extension |
 | **Hyprland / Sway** | Built-in compositor integration | Portal if the backend implements it, otherwise native binds | Compositor-dependent |
 
@@ -124,13 +124,13 @@ The AppImage bundles application libraries, but still depends on compatible host
 
 If the captured window changes size, Trophy keeps the recording's output canvas fixed, fitting the picture with black bars as needed. Supported NVIDIA and VA-API paths perform resize work on the GPU; unsupported DMA-BUF imports can request shared-memory fallback. Software encoding uses shared-memory capture. Synthetic hardware tests do not establish compatibility with every compositor, AMD/Intel driver or sustained recording workload.
 
-Trophy includes window-monitor integrations for KDE/KWin, GNOME, Hyprland, and Sway. KDE Plasma and GNOME are supported and verified end to end, including the window helper, portal global shortcuts and capture. Hyprland and Sway have integrations with less live verification. Hardware encoding support likewise does not guarantee every DMA-BUF capture path works.
+Trophy includes window-monitor integrations for KDE/KWin, GNOME, Hyprland, and Sway. On KDE Plasma, window state is read from the compositor's own window-management protocol, so nothing is installed or enabled; GNOME uses an extension. KDE Plasma and GNOME are supported and verified end to end, including window tracking, portal global shortcuts and capture. Hyprland and Sway have integrations with less live verification. Hardware encoding support likewise does not guarantee every DMA-BUF capture path works.
 
 ## First-run setup
 
 1. Complete the setup wizard, choosing your recording location, video, and audio settings.
 2. With an AppImage, Trophy registers its menu entry automatically on first launch, before it talks to the portal, so capture approvals and shortcuts belong to Trophy from the start. Nothing to confirm; **Settings → Desktop Integration** shows the entry and can remove it. Installing through an AppImage manager such as Gear Lever works too — Trophy keeps its own entry for the stable identity and hides it from menus so you are not offered a duplicate.
-3. Explicitly install the required window helper when prompted. Ordinary startup does not install or enable compositor integrations.
+3. On GNOME, explicitly install the window helper when prompted. KDE Plasma needs nothing installed. Ordinary startup does not install or enable compositor integrations.
 4. Assign recording and clip/bookmark shortcuts. KDE Plasma and GNOME show the portal approval dialog; if your backend does not support portal shortcuts, bind the commands described under [Keyboard shortcuts](#keyboard-shortcuts) natively.
 5. Start a game and authorize its capture when prompted. Saved approvals can restore capture on later sessions; stale approvals may need authorization again.
 
@@ -144,13 +144,11 @@ Trophy loads **no library into games**: Steam identity from the process environm
 
 A game with no such evidence is recognized when you add it to the Games page, or accept the **Suspected game** offer for it. When Trophy sees a window it cannot identify it shows that notice once: **Add to Games** records it and (when automatic recording or instant replay is enabled) asks for capture permission straight away; **Block** makes sure it is never offered again. The notice alone never records anything.
 
-### KDE Plasma / KWin window helper
+### KDE Plasma / KWin window tracking
 
-On KDE Plasma Wayland, Trophy uses the bundled **`trophy-monitor` KWin script** to read window identity, focus, fullscreen, and minimized state. The script supplies window context for game detection; screen capture is separately authorized through the portal.
+On KDE Plasma Wayland, Trophy reads window identity, focus, fullscreen, and minimized state straight from KWin's window-management protocol. Nothing is installed, no script runs inside the compositor, and Settings shows **Built in**. The window state feeds game detection; screen capture is separately authorized through the portal.
 
-Choose **Install helper** during setup or **Repair** in Settings to install and enable the script. Ordinary startup does not install a missing script or re-enable one you have disabled.
-
-If tracking is unavailable, check the script in **System Settings → Window Management → KWin Scripts**, then use Trophy's Repair action if needed. Setup reports Working only after the script is enabled and Trophy receives a valid window snapshot—not merely because the script is installed.
+If the compositor does not offer that protocol (an older Plasma, or a future release that removes it), Trophy falls back to the bundled **`trophy-monitor` KWin script**, and Settings offers **Install helper** / **Repair** for it. Setup reports Working only after Trophy receives a valid window snapshot — not merely because a helper is installed.
 
 ### GNOME window helper
 

@@ -9,6 +9,7 @@
 #include "GnomeBackend.h"
 #include "HyprlandBackend.h"
 #include "KWinBackend.h"
+#include "KWinProtocolBackend.h"
 #include "SwayBackend.h"
 #include "DetectorVersion.h"
 
@@ -84,7 +85,8 @@ void WaylandWindowMonitor::startMonitoring(bool repairBackend) {
 }
 
 void WaylandWindowMonitor::stopMonitoring() {
-  if (!m_monitoring && !m_kwin && !m_gnome && !m_hyprland && !m_sway) {
+  if (!m_monitoring && !m_kwin && !m_kwinProtocol && !m_gnome &&
+      !m_hyprland && !m_sway) {
     return;
   }
 
@@ -103,6 +105,7 @@ void WaylandWindowMonitor::stopMonitoring() {
     m_retired.push_back({backend, {}});
     backend.reset();
   };
+  retire(m_kwinProtocol);
   retire(m_kwin);
   retire(m_gnome);
   retire(m_hyprland);
@@ -147,7 +150,21 @@ bool WaylandWindowMonitor::kwinScriptEnabled() const {
 }
 
 bool WaylandWindowMonitor::kwinActive() const {
-  return m_kwin && m_kwin->isActive();
+  return (m_kwinProtocol && m_kwinProtocol->isActive()) ||
+         (m_kwin && m_kwin->isActive());
+}
+
+QString WaylandWindowMonitor::windowTrackingMode() const {
+  if (m_compositor.compare("kwin", Qt::CaseInsensitive) == 0)
+    return (m_kwinProtocol && m_kwinProtocol->isActive())
+               ? QStringLiteral("protocol")
+               : QStringLiteral("script");
+  if (m_compositor.compare("gnome", Qt::CaseInsensitive) == 0)
+    return QStringLiteral("helper");
+  if (m_compositor.compare("hyprland", Qt::CaseInsensitive) == 0 ||
+      m_compositor.compare("sway", Qt::CaseInsensitive) == 0)
+    return QStringLiteral("tool");
+  return QString();
 }
 
 QString WaylandWindowMonitor::gnomeHelperStatus() const {
@@ -176,6 +193,11 @@ int WaylandWindowMonitor::helperVersion() const {
 
 bool WaylandWindowMonitor::trackingReady() const {
   if (!m_monitoring) return false;
+  // A compositor protocol needs no install step, so a bound connection with
+  // a window list is already a working backend. An empty desktop still
+  // proves reporting; a missing snapshot does not.
+  if (m_kwinProtocol)
+    return m_kwinProtocol->isActive() && m_kwinProtocol->hasSnapshot();
   if (m_kwin)
     return m_kwin->isActive() && m_kwin->hasSnapshot() &&
            kwinScriptInstalled() && kwinScriptEnabled();
@@ -279,6 +301,10 @@ void WaylandWindowMonitor::checkFocusedApp() {
   const bool ready = trackingReady();
   if (ready != m_lastTrackingReady) {
     m_lastTrackingReady = ready;
+    if (ready)
+      qInfo() << "Window tracking ready:" << windows().size() << "windows";
+    else if (m_monitoring)
+      qInfo() << "Window tracking not ready";
     emit windowsChanged();
   }
   if (!m_gnome && !m_hyprland && !m_sway && !m_pollOverride)
@@ -326,7 +352,9 @@ void WaylandWindowMonitor::collectRetired() {
 void WaylandWindowMonitor::onBackendWindowsUpdated() {
   if (!m_monitoring) return;
   QObject *src = sender();
-  if (m_kwin && src == m_kwin.get())
+  if (m_kwinProtocol && src == m_kwinProtocol.get())
+    ingestSnapshot(m_kwinProtocol->windows());
+  else if (m_kwin && src == m_kwin.get())
     ingestSnapshot(m_kwin->windows());
   else if (m_gnome && src == m_gnome.get())
     ingestSnapshot(m_gnome->windows());
@@ -338,14 +366,38 @@ void WaylandWindowMonitor::onBackendWindowsUpdated() {
 
 void WaylandWindowMonitor::setupCompositorTracking(bool repairBackend) {
   if (m_compositor.contains("kwin", Qt::CaseInsensitive)) {
-    if (!m_kwin) {
-      m_kwin = std::make_shared<KWinBackend>();
+    // KWin exposes its own window-management protocol to ordinary clients:
+    // app_id, title, pid, focus/fullscreen state and geometry, event-driven.
+    // That is everything the script provides without the package install,
+    // the enable step or a helper to explain, so try it first. The script
+    // stays as the fallback for older/restricted compositors.
+    if (!m_kwinProtocol) {
+      m_kwinProtocol = std::make_shared<KWinProtocolBackend>();
       const auto generation = m_generation;
-      connect(m_kwin.get(), &KWinBackend::windowsUpdated, this,
+      connect(m_kwinProtocol.get(), &KWinProtocolBackend::windowsUpdated, this,
               [this, generation] { if (generation == m_generation) onBackendWindowsUpdated(); });
+      QString error;
+      if (m_kwinProtocol->start(&error)) {
+        qInfo() << "KWin window tracking: compositor protocol v"
+                << m_kwinProtocol->protocolVersion();
+      } else {
+        qInfo() << "KWin window tracking: protocol unavailable (" << error
+                << "), using the bundled script";
+        disconnect(m_kwinProtocol.get(), nullptr, this, nullptr);
+        m_kwinProtocol->stop();
+        m_kwinProtocol.reset();
+      }
     }
-    if (!m_kwin->start(repairBackend))
-      qWarning() << "KWin backend failed to start; window data unavailable";
+    if (!m_kwinProtocol) {
+      if (!m_kwin) {
+        m_kwin = std::make_shared<KWinBackend>();
+        const auto generation = m_generation;
+        connect(m_kwin.get(), &KWinBackend::windowsUpdated, this,
+                [this, generation] { if (generation == m_generation) onBackendWindowsUpdated(); });
+      }
+      if (!m_kwin->start(repairBackend))
+        qWarning() << "KWin backend failed to start; window data unavailable";
+    }
   } else if (m_compositor.contains("gnome", Qt::CaseInsensitive) ||
              m_compositor.contains("mutter", Qt::CaseInsensitive)) {
     if (!m_gnome) {

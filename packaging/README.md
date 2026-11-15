@@ -213,6 +213,8 @@ explicitly: an offscreen launch alone cannot establish their presence.
 
 Detection loads no library into games, so there is no reporter enrollment,
 content-addressed helper copy, or 32-bit reporter companion to package.
-Compositor window helpers (KWin script / GNOME extension) are the only
-detection-side artifacts, and they are installed by explicit user action.
+On KDE, window state comes from the compositor's own window-management
+protocol, so nothing is installed for detection. The GNOME extension and the
+fallback KWin script remain the only detection-side artifacts, and they are
+installed by explicit user action.
 

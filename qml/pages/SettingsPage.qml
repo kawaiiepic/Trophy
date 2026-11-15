@@ -1167,7 +1167,8 @@ Page {
                     id: detectionCard
                     sectionTitle: qsTr("Game Detection")
                     iconSource: "qrc:/icons/gamepad.svg"
-                    description: qsTr("Choose whether Trophy detects games and records sessions automatically. The window helper supplies the window state detection relies on.")
+                    description: qsTr("Choose whether Trophy detects games and records sessions automatically. Window identity comes from the compositor; on some desktops that needs a small helper.")
+                    readonly property string trackingMode: windowMonitor ? windowMonitor.windowTrackingMode : ""
 
                     SettingRow {
                         label: qsTr("Auto-detect Games")
@@ -1198,14 +1199,21 @@ Page {
                     }
 
                     SettingRow {
-                        label: qsTr("Game Window Helper (required)")
-                        help: qsTr("Provides window identity, focus and fullscreen state for game detection, the window picker and capture restoration.%1 Screen capture still requires separate authorization.")
-                              .arg(windowMonitor && windowMonitor.compositorName === "kwin"
-                                   ? qsTr(" On KDE this uses a read-only KWin script.")
-                                   : (windowMonitor && windowMonitor.compositorName === "gnome"
-                                      ? qsTr(" On GNOME this uses the Trophy Window Helper Shell extension. Logout/login may be required after installation.") : ""))
+                        label: detectionCard.trackingMode === "script"
+                               || detectionCard.trackingMode === "helper"
+                               ? qsTr("Game Window Helper (required)")
+                               : qsTr("Window tracking")
+                        help: detectionCard.trackingMode === "protocol"
+                              ? qsTr("Read directly from the compositor's window-management protocol: window identity, focus and fullscreen state. Nothing is installed and no window contents are inspected.")
+                              : (detectionCard.trackingMode === "tool"
+                                 ? qsTr("Provided by the compositor's own tooling. No Trophy integration is installed.")
+                                 : qsTr("Provides window identity, focus and fullscreen state for game detection, the window picker and capture restoration.%1 Screen capture still requires separate authorization.")
+                                   .arg(windowMonitor && windowMonitor.compositorName === "kwin"
+                                        ? qsTr(" On KDE this uses a read-only KWin script.")
+                                        : (windowMonitor && windowMonitor.compositorName === "gnome"
+                                           ? qsTr(" On GNOME this uses the Trophy Window Helper Shell extension. Logout/login may be required after installation.") : "")))
 
-                        showVersions: windowMonitor && (windowMonitor.compositorName === "kwin" || windowMonitor.compositorName === "gnome")
+                        showVersions: detectionCard.trackingMode === "script" || detectionCard.trackingMode === "helper"
                         bundledVersion: windowMonitor ? windowMonitor.bundledHelperVersion : 0
                         installedVersion: windowMonitor ? windowMonitor.helperVersion : 0
                         helperInstalled: windowMonitor && ((windowMonitor.compositorName === "kwin" && windowMonitor.kwinScriptInstalled)
@@ -1217,18 +1225,30 @@ Page {
                             statusWidth: badgeWidth
                             actionWidth: helperRepair.implicitWidth
                             showAction: windowMonitor && !windowMonitor.trackingReady
+                                        && detectionCard.trackingMode !== "protocol"
+                                        && detectionCard.trackingMode !== "tool"
                             healthy: windowMonitor && windowMonitor.trackingReady
                             attention: !healthy && !(windowMonitor && windowMonitor.trackingChecking)
-                            text: windowMonitor && windowMonitor.trackingReady
-                                  ? (windowMonitor.compositorName === "kwin" ? qsTr("Installed · Working") : qsTr("Working"))
-                                  : (windowMonitor && windowMonitor.trackingChecking ? qsTr("Checking…")
-                                     : (windowMonitor && windowMonitor.compositorName === "kwin"
-                                         ? (windowMonitor.kwinScriptInstalled
-                                            ? (windowMonitor.kwinScriptEnabled ? qsTr("Installed · Not reporting") : qsTr("Installed · Disabled"))
-                                            : qsTr("Not installed"))
-                                        : (windowMonitor && windowMonitor.compositorName === "gnome"
-                                           ? (windowMonitor.gnomeHelperInstalled ? qsTr("Installed · Awaiting login") : qsTr("Not installed"))
-                                           : qsTr("Unavailable"))))
+                            text: {
+                                if (!windowMonitor)
+                                    return "";
+                                if (windowMonitor.trackingReady)
+                                    return detectionCard.trackingMode === "protocol" ? qsTr("Built in")
+                                         : (windowMonitor.compositorName === "kwin" ? qsTr("Installed · Working") : qsTr("Working"));
+                                if (windowMonitor.trackingChecking)
+                                    return qsTr("Checking…");
+                                if (detectionCard.trackingMode === "protocol")
+                                    return qsTr("Connecting…");
+                                if (detectionCard.trackingMode === "tool")
+                                    return qsTr("Unavailable");
+                                if (windowMonitor.compositorName === "kwin")
+                                    return windowMonitor.kwinScriptInstalled
+                                        ? (windowMonitor.kwinScriptEnabled ? qsTr("Installed · Not reporting") : qsTr("Installed · Disabled"))
+                                        : qsTr("Not installed");
+                                if (windowMonitor.compositorName === "gnome")
+                                    return windowMonitor.gnomeHelperInstalled ? qsTr("Installed · Awaiting login") : qsTr("Not installed");
+                                return qsTr("Unavailable");
+                            }
                             TrophyButton {
                                 id: helperRepair
                                 anchors.right: parent.right
@@ -1251,6 +1271,7 @@ Page {
 
                     Label {
                         Layout.fillWidth: true
+                        visible: detectionCard.trackingMode === "script" || detectionCard.trackingMode === "helper"
                         text: qsTr("Installed versions may not be active until the game, compositor or login session restarts.")
                         color: Theme.textMutedColor
                         font.pixelSize: Theme.fontSizeSmall

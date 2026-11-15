@@ -212,27 +212,38 @@ if(ENABLE_NVENC)
     endif()
 endif()
 
-# Cross-compositor window list: the only standard Wayland toplevel listing.
+# Window lists without a per-desktop script:
+#  - ext-foreign-toplevel-list-v1: the portable standard listing (app_id/title
+#    only), used where a compositor supports it;
+#  - plasma-window-management: KDE's own protocol, which also carries pid,
+#    focus/fullscreen state and geometry. KWin does not implement the
+#    standard listing protocols, so this is what makes the KWin script
+#    optional on Plasma.
 pkg_check_modules(WAYLAND_CLIENT IMPORTED_TARGET wayland-client)
 find_program(WAYLAND_SCANNER_EXECUTABLE wayland-scanner)
 if(WAYLAND_CLIENT_FOUND AND WAYLAND_SCANNER_EXECUTABLE)
     message(STATUS "Wayland toplevel registry enabled")
     set(TROPHY_TOPLEVEL_PROTOCOL_DIR "${CMAKE_BINARY_DIR}/wayland-protocols")
-    set(TROPHY_TOPLEVEL_PROTOCOL_XML
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/detection/protocols/ext-foreign-toplevel-list-v1.xml")
-    add_custom_command(
-        OUTPUT
-            "${TROPHY_TOPLEVEL_PROTOCOL_DIR}/ext-foreign-toplevel-list-client-protocol.h"
-            "${TROPHY_TOPLEVEL_PROTOCOL_DIR}/ext-foreign-toplevel-list-protocol.c"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${TROPHY_TOPLEVEL_PROTOCOL_DIR}"
-        COMMAND "${WAYLAND_SCANNER_EXECUTABLE}" client-header
-            "${TROPHY_TOPLEVEL_PROTOCOL_XML}"
-            "${TROPHY_TOPLEVEL_PROTOCOL_DIR}/ext-foreign-toplevel-list-client-protocol.h"
-        COMMAND "${WAYLAND_SCANNER_EXECUTABLE}" private-code
-            "${TROPHY_TOPLEVEL_PROTOCOL_XML}"
-            "${TROPHY_TOPLEVEL_PROTOCOL_DIR}/ext-foreign-toplevel-list-protocol.c"
-        DEPENDS "${TROPHY_TOPLEVEL_PROTOCOL_XML}"
-        VERBATIM)
+    set(TROPHY_TOPLEVEL_PROTOCOL_SOURCES "")
+    foreach(trophy_protocol ext-foreign-toplevel-list-v1 plasma-window-management)
+        set(TROPHY_TOPLEVEL_PROTOCOL_XML
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/detection/protocols/${trophy_protocol}.xml")
+        add_custom_command(
+            OUTPUT
+                "${TROPHY_TOPLEVEL_PROTOCOL_DIR}/${trophy_protocol}-client-protocol.h"
+                "${TROPHY_TOPLEVEL_PROTOCOL_DIR}/${trophy_protocol}-protocol.c"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${TROPHY_TOPLEVEL_PROTOCOL_DIR}"
+            COMMAND "${WAYLAND_SCANNER_EXECUTABLE}" client-header
+                "${TROPHY_TOPLEVEL_PROTOCOL_XML}"
+                "${TROPHY_TOPLEVEL_PROTOCOL_DIR}/${trophy_protocol}-client-protocol.h"
+            COMMAND "${WAYLAND_SCANNER_EXECUTABLE}" private-code
+                "${TROPHY_TOPLEVEL_PROTOCOL_XML}"
+                "${TROPHY_TOPLEVEL_PROTOCOL_DIR}/${trophy_protocol}-protocol.c"
+            DEPENDS "${TROPHY_TOPLEVEL_PROTOCOL_XML}"
+            VERBATIM)
+        list(APPEND TROPHY_TOPLEVEL_PROTOCOL_SOURCES
+            "${TROPHY_TOPLEVEL_PROTOCOL_DIR}/${trophy_protocol}-protocol.c")
+    endforeach()
     add_compile_definitions(HAVE_WAYLAND_TOPLEVEL)
     set(TROPHY_WAYLAND_CLIENT_LIB PkgConfig::WAYLAND_CLIENT)
 else()
@@ -319,12 +330,13 @@ set(DETECTION_SOURCES
     src/detection/LegacyVulkanLayerCleanup.cpp
     src/detection/ToplevelModel.cpp
     src/detection/ToplevelRegistry.cpp
+    src/detection/PlasmaToplevelModel.cpp
+    src/detection/KWinProtocolBackend.cpp
     src/detection/PipeWireStreamWatcher.cpp
     src/detection/GameWhitelist.cpp
 )
 if(WAYLAND_CLIENT_FOUND AND WAYLAND_SCANNER_EXECUTABLE)
-    list(APPEND DETECTION_SOURCES
-        "${TROPHY_TOPLEVEL_PROTOCOL_DIR}/ext-foreign-toplevel-list-protocol.c")
+    list(APPEND DETECTION_SOURCES ${TROPHY_TOPLEVEL_PROTOCOL_SOURCES})
 endif()
 
 
@@ -414,6 +426,8 @@ set(DETECTION_HEADERS
     src/detection/LegacyVulkanLayerCleanup.h
     src/detection/ToplevelModel.h
     src/detection/ToplevelRegistry.h
+    src/detection/PlasmaToplevelModel.h
+    src/detection/KWinProtocolBackend.h
     src/detection/PipeWireStreamWatcher.h
     src/detection/GameListModel.h
     src/detection/GameWhitelist.h
