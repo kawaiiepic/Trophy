@@ -285,7 +285,7 @@ gtest_discover_tests(test_Autostart)
 # --- GlobalShortcutManager (no portal needed; routing is local) ---
 add_executable(test_GlobalShortcuts test_GlobalShortcuts.cpp ${CMAKE_SOURCE_DIR}/src/core/GlobalShortcutManager.cpp)
 target_include_directories(test_GlobalShortcuts PRIVATE ${TEST_INCLUDE_DIRS})
-target_link_libraries(test_GlobalShortcuts PRIVATE ${TEST_LINK_LIBS} Qt6::DBus)
+target_link_libraries(test_GlobalShortcuts PRIVATE ${TEST_LINK_LIBS} Qt6::DBus Qt6::Network)
 gtest_discover_tests(test_GlobalShortcuts)
 
 # --- BugReport (prefilled GitHub issue URL + log tail; no daemon needed) ---
@@ -522,7 +522,7 @@ endif()
 add_executable(test_GlobalShortcutPortal test_GlobalShortcutPortal.cpp
     ${CMAKE_SOURCE_DIR}/src/core/GlobalShortcutManager.cpp)
 target_include_directories(test_GlobalShortcutPortal PRIVATE ${TEST_INCLUDE_DIRS})
-target_link_libraries(test_GlobalShortcutPortal PRIVATE ${TEST_LINK_LIBS} Qt6::DBus Qt6::Test)
+target_link_libraries(test_GlobalShortcutPortal PRIVATE ${TEST_LINK_LIBS} Qt6::DBus Qt6::Network Qt6::Test)
 if(TROPHY_DBUS_RUN_SESSION AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.29)
     set_property(TARGET test_GlobalShortcutPortal PROPERTY TEST_LAUNCHER
         "${TROPHY_DBUS_RUN_SESSION};--;${CMAKE_COMMAND};-E;env;TROPHY_PRIVATE_PORTAL_TESTS=1")

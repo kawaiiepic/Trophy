@@ -336,3 +336,17 @@ TEST_F(GlobalShortcutTest, EmptyBindResponseSafelyClearsOldBindingsOnce) {
   EXPECT_FALSE(timerActive(mgr));
   EXPECT_EQ(spy.count(), 1);
 }
+
+TEST_F(GlobalShortcutTest, UmbrielShortcutTableValidatesAndEscapesInput) {
+  EXPECT_TRUE(GlobalShortcutManager::validUmbrielChord("F9"));
+  EXPECT_TRUE(GlobalShortcutManager::validUmbrielChord("Ctrl+Shift+F10"));
+  EXPECT_TRUE(GlobalShortcutManager::validUmbrielChord("Mod+Shift+K"));
+  EXPECT_TRUE(GlobalShortcutManager::validUmbrielChord(""));
+  EXPECT_FALSE(GlobalShortcutManager::validUmbrielChord("bad\"value"));
+  EXPECT_FALSE(GlobalShortcutManager::validUmbrielChord("F9\n[general]"));
+  EXPECT_FALSE(GlobalShortcutManager::validUmbrielChord("Ctrl++F9"));
+  EXPECT_TRUE(GlobalShortcutManager::umbrielShortcutTable("F9", "F10")
+                  .contains(QStringLiteral("\"toggle-recording\" = \"F9\"")));
+  EXPECT_TRUE(GlobalShortcutManager::umbrielShortcutTable("F9", "F9").isEmpty());
+  EXPECT_TRUE(GlobalShortcutManager::umbrielShortcutTable("bad\"value", "F10").isEmpty());
+}

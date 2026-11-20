@@ -1444,13 +1444,21 @@ Page {
 
                     SettingRow {
                         label: qsTr("Change keys")
-                        help: qsTr("Opens the system dialog to remap Trophy's global keys.")
+                        help: (windowMonitor && windowMonitor.compositorName === "umbriel")
+                              ? qsTr("Umbriel uses TOML overrides instead of the unsupported ConfigureShortcuts portal method.")
+                              : qsTr("Opens the system dialog to remap Trophy's global keys.")
                         rowEnabled: globalShortcuts ? globalShortcuts.bound : false
 
                         TrophyButton {
                             Layout.alignment: Qt.AlignVCenter
                             text: qsTr("Configure")
-                            onClicked: { if (globalShortcuts) globalShortcuts.reconfigureShortcuts() }
+                            onClicked: {
+                                if (!globalShortcuts) return;
+                                if (windowMonitor && windowMonitor.compositorName === "umbriel")
+                                    umbrielKeysDialog.open();
+                                else
+                                    globalShortcuts.reconfigureShortcuts();
+                            }
                         }
                     }
 
@@ -1627,6 +1635,11 @@ Page {
     }
 
     // --- DIALOGS ---
+    UmbrielShortcutDialog {
+        id: umbrielKeysDialog
+        shortcutManager: typeof globalShortcuts !== "undefined" ? globalShortcuts : null
+    }
+
     FolderDialog {
         id: folderDialog
 

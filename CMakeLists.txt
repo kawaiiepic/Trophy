@@ -508,6 +508,7 @@ qt_add_qml_module(${PROJECT_NAME}
         qml/controls/TrophyTextField.qml
         qml/controls/TrophySearchBox.qml
         qml/controls/TrophyDialog.qml
+        qml/controls/UmbrielShortcutDialog.qml
         qml/controls/ReleaseNotesView.qml
         qml/controls/TrophyWindowButton.qml
     SOURCES

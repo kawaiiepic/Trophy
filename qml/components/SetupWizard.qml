@@ -22,6 +22,11 @@ Rectangle {
     color: Theme.withOpacity(Theme.backgroundColor, 0.95)
     z: 1000 
 
+    UmbrielShortcutDialog {
+        id: umbrielKeysDialog
+        shortcutManager: typeof globalShortcuts !== "undefined" ? globalShortcuts : null
+    }
+
     property int currentStep: 0
     property int totalSteps: 7 // Welcome, Storage, Audio, Modules, Hardware, Shortcuts, Finish
     readonly property bool windowHelperReady: windowMonitor && windowMonitor.trackingReady
@@ -818,7 +823,12 @@ Rectangle {
                                             highlighted: !stepKeysScroll.hasKeys
                                             onClicked: {
                                                 if (settingsManager) settingsManager.globalShortcutsEnabled = true;
-                                                if (globalShortcuts) globalShortcuts.ensureSetup();
+                                                if (globalShortcuts) {
+                                                    if (windowMonitor && windowMonitor.compositorName === "umbriel" && stepKeysScroll.portalBound)
+                                                        umbrielKeysDialog.open();
+                                                    else
+                                                        globalShortcuts.ensureSetup();
+                                                }
                                             }
                                         }
                                     }

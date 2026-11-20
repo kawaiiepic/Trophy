@@ -107,6 +107,17 @@ public slots:
   // Reopen the portal's key dialog on the live session. Falls back to
   // requestShortcuts when there is no session yet.
   void reconfigureShortcuts();
+
+  // Umbriel's v1 portal has no ConfigureShortcuts method. Edit its live
+  // compositor overrides through read/write IPC (session only), and let
+  // users copy the equivalent persistent TOML configuration.
+  Q_INVOKABLE bool applyUmbrielShortcuts(const QString &recordKey,
+                                         const QString &clipKey);
+  Q_INVOKABLE bool copyUmbrielShortcutConfiguration(const QString &recordKey,
+                                                    const QString &clipKey);
+  static bool validUmbrielChord(const QString &chord);
+  static QString umbrielShortcutTable(const QString &recordKey,
+                                     const QString &clipKey);
   // Entry point for the D-Bus Activated signal; public for tests.
   void handleActivated(const QDBusObjectPath &sessionHandle,
                        const QString &id);
@@ -164,6 +175,7 @@ private:
   bool m_enabled = true;
   QString m_lastError;
   bool m_available = false;
+  uint m_portalVersion = 0;
   quint64 m_availabilityGeneration = 0;
   QTimer m_availabilityTimeout;
   // Covers the method reply AND the subsequent portal Response. Expiry

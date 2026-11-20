@@ -15,6 +15,13 @@
 #include <QDBusPendingCallWatcher>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QClipboard>
+#include <QElapsedTimer>
+#include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocalSocket>
 #include <QRegularExpression>
 #include <QUuid>
 
@@ -101,6 +108,9 @@ void GlobalShortcutManager::queryAvailability() {
         reply.arguments().first().metaType() == QMetaType::fromType<QDBusVariant>()) {
       const QVariant version = reply.arguments().first().value<QDBusVariant>().variant();
       available = version.metaType() == QMetaType::fromType<uint>() && version.toUInt() > 0;
+      m_portalVersion = available ? version.toUInt() : 0;
+    } else {
+      m_portalVersion = 0;
     }
     setAvailable(available);
   });
@@ -378,6 +388,10 @@ void GlobalShortcutManager::reconfigureShortcuts() {
     requestShortcuts();
     return;
   }
+  if (m_portalVersion < 2) {
+    setLastError(tr("Your desktop's shortcuts portal does not support an in-app editor. Edit the desktop's shortcut configuration instead."));
+    return;
+  }
   // Empirical (KDE 6.x GlobalShortcuts backend): a repeat BindShortcuts
   // on a live session returns the existing bindings WITHOUT showing any
   // dialog, so it cannot be used to re-pick keys. ConfigureShortcuts is
@@ -408,6 +422,131 @@ void GlobalShortcutManager::reconfigureShortcuts() {
                      ? tr("The system could not open the shortcut editor.")
                      : detail);
   });
+}
+
+QString UmbrielAppId() {
+  QString id = QGuiApplication::desktopFileName();
+  if (id.endsWith(QStringLiteral(".desktop")))
+    id.chop(8);
+  if (id.isEmpty())
+    id = QStringLiteral("io.github.stevenjwheeler.Trophy");
+  return id;
+}
+
+bool GlobalShortcutManager::validUmbrielChord(const QString &chord) {
+  // Allow empty to explicitly disable a shortcut. Keep the accepted input
+  // intentionally narrow so it can be represented safely as both JSON and
+  // a TOML string without escaping arbitrary user-provided characters.
+  static const QRegularExpression pattern(
+      QStringLiteral(R"(\A[A-Za-z0-9_-]+(?:\+[A-Za-z0-9_-]+){0,5}\z)"));
+  return chord.isEmpty() || (chord.size() <= 80 && pattern.match(chord).hasMatch());
+}
+
+QString GlobalShortcutManager::umbrielShortcutTable(
+    const QString &recordKey, const QString &clipKey) {
+  if (!validUmbrielChord(recordKey) || !validUmbrielChord(clipKey) ||
+      (!recordKey.isEmpty() && recordKey == clipKey))
+    return {};
+  return QStringLiteral("[global_shortcuts.\"%1\"]\n"
+                        "\"toggle-recording\" = \"%2\"\n"
+                        "\"save-clip\" = \"%3\"\n")
+      .arg(UmbrielAppId(), recordKey, clipKey);
+}
+
+bool GlobalShortcutManager::copyUmbrielShortcutConfiguration(
+    const QString &recordKey, const QString &clipKey) {
+  const QString snippet = umbrielShortcutTable(recordKey, clipKey);
+  if (snippet.isEmpty()) {
+    setLastError(tr("Enter valid, different keyboard chords (or leave a chord empty to disable it)."));
+    return false;
+  }
+  if (!QGuiApplication::clipboard()) {
+    setLastError(tr("The clipboard is unavailable."));
+    return false;
+  }
+  QGuiApplication::clipboard()->setText(snippet);
+  setLastError({});
+  return true;
+}
+
+bool GlobalShortcutManager::applyUmbrielShortcuts(
+    const QString &recordKey, const QString &clipKey) {
+  const QString snippet = umbrielShortcutTable(recordKey, clipKey);
+  if (snippet.isEmpty()) {
+    setLastError(tr("Enter valid, different keyboard chords (or leave a chord empty to disable it)."));
+    return false;
+  }
+  // Direct IPC avoids launching the compositor binary inside the AppImage.
+  const QString socketOverride = qEnvironmentVariable("UMBRIEL_SOCKET");
+  const QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+  const QString display = qEnvironmentVariable("WAYLAND_DISPLAY");
+  const QString socketPath = !socketOverride.isEmpty()
+      ? socketOverride
+      : (!runtime.isEmpty() && !display.isEmpty()
+          ? runtime + QStringLiteral("/umbriel-") + display + QStringLiteral(".sock")
+          : QString());
+  if (socketPath.isEmpty()) {
+    setLastError(tr("Cannot find Umbriel's IPC socket. Check WAYLAND_DISPLAY and XDG_RUNTIME_DIR."));
+    return false;
+  }
+
+  const QString table = QStringLiteral("{\"toggle-recording\" = \"%1\", "
+                                       "\"save-clip\" = \"%2\"}")
+                             .arg(recordKey, clipKey);
+  const QString key = QStringLiteral("global_shortcuts.\"%1\"").arg(UmbrielAppId());
+  QJsonObject request;
+  request.insert(QStringLiteral("cmd"), QStringLiteral("config-set"));
+  request.insert(QStringLiteral("args"), QJsonArray{key, table});
+  const QString token = qEnvironmentVariable("UMBRIEL_LAUNCH_TOKEN");
+  if (!token.isEmpty())
+    request.insert(QStringLiteral("launch_token"), token);
+
+  QLocalSocket socket;
+  socket.connectToServer(socketPath, QIODevice::ReadWrite);
+  if (!socket.waitForConnected(1500)) {
+    setLastError(tr("Cannot connect to Umbriel: %1").arg(socket.errorString()));
+    return false;
+  }
+  const QByteArray bytes = QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n';
+  if (socket.write(bytes) != bytes.size() ||
+      (socket.bytesToWrite() > 0 && !socket.waitForBytesWritten(1500))) {
+    setLastError(tr("Could not send the shortcut change to Umbriel: %1").arg(socket.errorString()));
+    return false;
+  }
+  QByteArray response;
+  QElapsedTimer timer;
+  timer.start();
+  while (!response.contains('\n') && timer.elapsed() < 2500) {
+    response += socket.readAll();
+    if (response.size() > 65536)
+      break;
+    if (response.contains('\n'))
+      break;
+    if (socket.state() == QLocalSocket::UnconnectedState)
+      break;
+    socket.waitForReadyRead(qMax(1, 2500 - int(timer.elapsed())));
+  }
+  response += socket.readAll();
+  const int end = response.indexOf('\n');
+  if (end < 0 || end > 65536) {
+    setLastError(tr("Umbriel did not acknowledge the shortcut change."));
+    return false;
+  }
+  QJsonParseError error;
+  const QJsonDocument reply = QJsonDocument::fromJson(response.left(end), &error);
+  if (error.error != QJsonParseError::NoError || !reply.isObject()) {
+    setLastError(tr("Umbriel returned an invalid shortcut response."));
+    return false;
+  }
+  const QJsonObject result = reply.object();
+  if (!result.contains(QStringLiteral("ok"))) {
+    setLastError(result.value(QStringLiteral("err")).toString(
+        tr("Umbriel refused the requested shortcut bindings.")));
+    return false;
+  }
+  setLastError({});
+  qInfo() << "Umbriel shortcut overrides applied for this session";
+  return true;
 }
 
 void GlobalShortcutManager::handleActivated(
