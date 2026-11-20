@@ -1,0 +1,81 @@
+name: Publish verified Umbriel v0.11.2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-umbriel.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    if: github.repository == 'kawaiiepic/Trophy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify tested source, successful checks, and all release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          tested_sha="6be7da851802fe1345edafeb73cb2fcdd4ce324b"
+          tested_run="44711241380"
+          tag="v0.11.2"
+
+          # The earlier workflow only failed after build, tests, packages and
+          # checksum verification succeeded. Validate exactly those jobs.
+          run_info=$(gh api "repos/$repo/actions/runs/$tested_run")
+          jq -e --arg sha "$tested_sha" \
+            '.head_sha == $sha and .event == "push" and .status == "completed"' \
+            <<<"$run_info" >/dev/null
+          jobs=$(gh api "repos/$repo/actions/runs/$tested_run/jobs?per_page=100")
+          jq -e '.total_count <= 100' <<<"$jobs" >/dev/null
+          for job in \
+            "build" "test" "package-appimage" "package-native (ubuntu, deb)" \
+            "package-native (fedora, rpm)" "verify-packages" \
+            "reporters-multilib (32)" "reporters-multilib (64)"; do
+            jq -e --arg name "$job" \
+              '[.jobs[] | select(.name == $name and .conclusion == "success")] | length == 1' \
+              <<<"$jobs" >/dev/null
+          done
+
+          # The tag was created from that already-tested SHA, not HEAD.
+          tag_ref=$(gh api "repos/$repo/git/ref/tags/$tag")
+          jq -e --arg sha "$tested_sha" \
+            '.object.type == "commit" and .object.sha == $sha' \
+            <<<"$tag_ref" >/dev/null
+
+          # GitHub does not resolve unpublished draft releases by tag.
+          # Look them up through the release listing and use the numeric ID.
+          releases=$(gh api "repos/$repo/releases?per_page=100")
+          release_id=$(jq -er --arg tag "$tag" \
+            '[.[] | select(.tag_name == $tag)] | if length == 1 then .[0].id else error("expected one matching release") end' \
+            <<<"$releases")
+          release=$(gh api "repos/$repo/releases/$release_id")
+          jq -e --arg sha "$tested_sha" --arg tag "$tag" '
+            .tag_name == $tag and .target_commitish == $sha and
+            (.assets | length) == 5 and
+            (all(.assets[]; .state == "uploaded" and (.digest | startswith("sha256:")))) and
+            ([.assets[].name] | sort) ==
+            (["SHA256SUMS", "Trophy-0.11.2-amd64.deb",
+              "Trophy-0.11.2-x86_64.AppImage",
+              "Trophy-0.11.2-x86_64.rpm",
+              "Trophy-0.11.2.tar.xz"] | sort)
+          ' <<<"$release" >/dev/null
+
+          if jq -e '.draft == false and .prerelease == true' \
+              <<<"$release" >/dev/null; then
+            echo "Verified prerelease is already published."
+            exit 0
+          fi
+          jq -e '.draft == true' <<<"$release" >/dev/null
+          published=$(gh api --method PATCH "repos/$repo/releases/$release_id" \
+            -F draft=false -F prerelease=true)
+          jq -e --arg tag "$tag" \
+            '.tag_name == $tag and .draft == false and .prerelease == true' \
+            <<<"$published" >/dev/null
+          echo "Published verified Umbriel release $tag."
