@@ -105,8 +105,10 @@ QList<WindowInfo> UmbrielBackend::parseWindows(
     window.width = object.value("w").toInt();
     window.height = object.value("h").toInt();
     const QSize size = outputSizes.value(object.value("output").toString());
-    window.outputWidth = size.width();
-    window.outputHeight = size.height();
+    // An unknown output has QSize(-1, -1). Preserve WindowInfo's
+    // zero-for-unknown contract so missing geometry stays nonnegative.
+    window.outputWidth = size.isValid() ? size.width() : 0;
+    window.outputHeight = size.isValid() ? size.height() : 0;
     windows.append(window);
   }
   std::sort(windows.begin(), windows.end(),
