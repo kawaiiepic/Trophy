@@ -17,6 +17,7 @@
 #include <mutex>
 #include <thread>
 
+#include "capture/IVideoCaptureSource.h"
 #include "core/CircularFrameBuffer.h"
 #include "core/FrameDispatcher.h"
 #include "core/FrameTypes.h"
