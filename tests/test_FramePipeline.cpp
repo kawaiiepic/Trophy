@@ -136,6 +136,54 @@ TEST(QueuedFrameTest, MultiPlaneMoveAssignmentReleasesOldFds) {
   EXPECT_FALSE(fdIsOpen(newPlane));
 }
 
+TEST(FrameDescriptorTest, MultiPlaneDispatchPreservesAllFdLifetimes) {
+  FrameDispatcher dispatcher;
+  auto sinkA = std::make_shared<CountingSink>();
+  auto sinkB = std::make_shared<CountingSink>();
+  dispatcher.registerSink(sinkA);
+  dispatcher.registerSink(sinkB);
+  const int srcA = makeFd(), srcB = makeFd();
+  {
+    FrameDescriptor frame;
+    ASSERT_TRUE(frame.setDmaBufPlanes({
+        {srcA, 1024, 0, 8192}, {srcB, 128, 2048, 4096}}));
+    EXPECT_EQ(frame.fd, frame.dmaBufPlanes.front().fd);
+    dispatcher.dispatch(frame);
+    EXPECT_EQ(sinkA->frames.size(), 1u);
+    EXPECT_EQ(sinkB->frames.size(), 1u);
+    ASSERT_EQ(sinkA->frames[0].dmaBufPlanes.size(), 2u);
+    ASSERT_EQ(sinkB->frames[0].dmaBufPlanes.size(), 2u);
+    EXPECT_NE(sinkA->frames[0].dmaBufPlanes[1].fd,
+              sinkB->frames[0].dmaBufPlanes[1].fd);
+    close(srcA);
+    close(srcB);
+    EXPECT_TRUE(fdIsOpen(sinkA->frames[0].dmaBufPlanes[1].fd));
+  }
+  EXPECT_TRUE(fdIsOpen(sinkB->frames[0].dmaBufPlanes[0].fd));
+  EXPECT_TRUE(fdIsOpen(sinkB->frames[0].dmaBufPlanes[1].fd));
+}
+
+TEST(FrameDescriptorTest, MultiPlaneMoveReleasesOldOwnedFds) {
+  const int srcA = makeFd(), srcB = makeFd(), srcC = makeFd();
+  int fdOld = -1, fdCurrent = -1;
+  {
+    FrameDescriptor target;
+    ASSERT_TRUE(target.setDmaBufPlanes({{srcA, 256, 0, 4096}}));
+    fdOld = target.fd;
+    FrameDescriptor source;
+    ASSERT_TRUE(source.setDmaBufPlanes({{srcB, 512, 0, 4096},
+                                        {srcC, 128, 1024, 4096}}));
+    fdCurrent = source.dmaBufPlanes[1].fd;
+    target = std::move(source);
+    EXPECT_FALSE(fdIsOpen(fdOld));
+    EXPECT_EQ(source.fd, -1);
+    EXPECT_TRUE(source.dmaBufPlanes.empty());
+    EXPECT_TRUE(fdIsOpen(fdCurrent));
+  }
+  close(srcA); close(srcB); close(srcC);
+  EXPECT_FALSE(fdIsOpen(fdCurrent));
+}
+
 // --- FrameDescriptor RAII ---
 
 TEST(FrameDescriptorTest, MoveTransfersOwnership) {

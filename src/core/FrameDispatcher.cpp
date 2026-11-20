@@ -29,16 +29,18 @@ void FrameDispatcher::dispatch(const FrameDescriptor &frame) {
   for (size_t i = 0; i < sinks.size(); ++i) {
     auto &sink = sinks[i];
     // Duplicate fd per sink to give ownership to the sink (cheap dup syscall)
-    int dupfd = -1;
-    if (frame.fd != -1) {
-      dupfd = dup(frame.fd);
-      if (dupfd == -1) {
-        continue;
-      }
-    }
+    // The primary fd is an alias when multi-plane descriptors are present.
+    // Duplicate every plane independently before handing ownership away.
+    const int dupfd = frame.dmaBufPlanes.empty() && frame.fd >= 0
+                          ? ::dup(frame.fd) : -1;
+    if (frame.dmaBufPlanes.empty() && frame.fd >= 0 && dupfd < 0)
+      continue;
     FrameDescriptor copy(dupfd, frame.width, frame.height, frame.format,
-                             frame.pts, frame.pixelFormat, frame.drmModifier,
-                              frame.dmaBufStride, frame.dmaBufOffset);
+                         frame.pts, frame.pixelFormat, frame.drmModifier,
+                         frame.dmaBufStride, frame.dmaBufOffset);
+    if (!frame.dmaBufPlanes.empty() &&
+        !copy.setDmaBufPlanes(frame.dmaBufPlanes))
+      continue;
     copy.bufferLease = frame.bufferLease;
     copy.requestCpuFallback = frame.requestCpuFallback;
     bool ok = sink->tryEnqueue(std::move(copy));

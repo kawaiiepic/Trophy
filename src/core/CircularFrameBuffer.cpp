@@ -62,14 +62,19 @@ std::vector<FrameDescriptor> CircularFrameBuffer::extractLast(size_t maxFrames) 
         (m_writeIndex + m_capacityFrames - 1 - i) % m_capacityFrames;
     if (m_buffer[idx].fd == -1)
       continue;
-    // Duplicate fd for caller
-    int dupfd = dup(m_buffer[idx].fd);
-    if (dupfd == -1)
+    // Retain every DMA-BUF plane in extracted frames.
+    const auto &frame = m_buffer[idx];
+    const int dupfd = frame.dmaBufPlanes.empty() ? ::dup(frame.fd) : -1;
+    if (frame.dmaBufPlanes.empty() && dupfd < 0)
       continue;
-    FrameDescriptor copy(dupfd, m_buffer[idx].width, m_buffer[idx].height,
-                         m_buffer[idx].format, m_buffer[idx].pts,
-                         m_buffer[idx].pixelFormat, m_buffer[idx].drmModifier,
-                         m_buffer[idx].dmaBufStride, m_buffer[idx].dmaBufOffset);
+    FrameDescriptor copy(dupfd, frame.width, frame.height,
+                         frame.format, frame.pts, frame.pixelFormat,
+                         frame.drmModifier, frame.dmaBufStride, frame.dmaBufOffset);
+    if (!frame.dmaBufPlanes.empty() &&
+        !copy.setDmaBufPlanes(frame.dmaBufPlanes))
+      continue;
+    copy.bufferLease = frame.bufferLease;
+    copy.requestCpuFallback = frame.requestCpuFallback;
     out.push_back(std::move(copy));
   }
   return out;

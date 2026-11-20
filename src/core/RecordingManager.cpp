@@ -988,6 +988,7 @@ bool RecordingManager::buildPipeline() {
           vf.pixelFormat = frame.pixelFormat != 0 ? static_cast<int>(frame.pixelFormat) : static_cast<int>(frame.format);
           vf.isDmaBuf = true;
           vf.dmaBufFd = frame.fd;
+          vf.dmaBufPlanes = frame.dmaBufPlanes;
           vf.drmFormat = frame.format;
           vf.drmModifier = frame.drmModifier;
           vf.dmaBufStride = frame.dmaBufStride;

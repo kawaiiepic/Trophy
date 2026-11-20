@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "core/FrameTypes.h"
 #include <QObject>
 #include <QSize>
 #include <cstdint>
@@ -20,16 +21,6 @@ namespace TrophyBackend {
 /**
  * @brief Video frame data passed to callbacks
  */
-// Each SPA data block describes one DMA-BUF plane. Compressed DRM modifiers
-// may carry auxiliary metadata planes; their FDs/strides/offsets must survive
-// until the hardware encoder finishes importing the frame.
-struct DmaBufPlane {
-  int fd = -1;
-  int stride = 0;
-  uint32_t offset = 0;
-  uint32_t size = 0; // Producer-reported size; some DMA-BUFs leave this zero.
-};
-
 struct VideoFrame {
   const uint8_t *data; // Frame pixel data
   int width;           // Frame width in pixels

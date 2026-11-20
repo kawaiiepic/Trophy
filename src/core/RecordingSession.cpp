@@ -1077,9 +1077,14 @@ void RecordingSession::handFrameToEncoding(const VideoFrame &frame) {
   }
   if (frame.isDmaBuf && frame.dmaBufFd >= 0) {
     FrameDescriptor fd;
-    fd.fd = ::dup(frame.dmaBufFd);
-    if (fd.fd == -1)
-      return; // cannot dup, drop
+    if (!frame.dmaBufPlanes.empty()) {
+      if (!fd.setDmaBufPlanes(frame.dmaBufPlanes))
+        return;
+    } else {
+      fd.fd = ::dup(frame.dmaBufFd);
+      if (fd.fd == -1)
+        return;
+    }
     fd.width = frame.width;
     fd.height = frame.height;
     fd.format = frame.drmFormat;

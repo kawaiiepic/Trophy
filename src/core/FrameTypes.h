@@ -3,8 +3,18 @@
 #include <cstdint>
 #include <memory>
 #include <functional>
+#include <vector>
 
 namespace TrophyBackend {
+
+// The primary fd aliases plane zero when compressed DRM buffers contain
+// additional metadata planes.
+struct DmaBufPlane {
+  int fd = -1;
+  int stride = 0;
+  uint32_t offset = 0;
+  uint32_t size = 0;
+};
 
 struct FrameDescriptor {
   int fd{-1};
@@ -15,6 +25,8 @@ struct FrameDescriptor {
   uint64_t drmModifier{0};
   int dmaBufStride{0};
   int dmaBufOffset{0};
+  std::vector<DmaBufPlane> dmaBufPlanes;
+  bool setDmaBufPlanes(const std::vector<DmaBufPlane> &borrowed);
   uint64_t pts{0};
   std::shared_ptr<void> bufferLease;
   std::function<void()> requestCpuFallback;
