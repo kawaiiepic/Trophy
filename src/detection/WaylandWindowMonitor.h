@@ -25,6 +25,7 @@ class KWinBackend;
 class GnomeBackend;
 class HyprlandBackend;
 class SwayBackend;
+class UmbrielBackend;
 
 /**
  * @brief Monitors Wayland window/application activity.
@@ -65,7 +66,7 @@ public:
   QList<WindowInfo> windows() const;
   QString compositor() const { return m_compositor; }
 
-  /** Canonical compositor key: kwin, gnome, hyprland, sway, or raw/unknown. */
+  /** Canonical compositor key: kwin, gnome, hyprland, sway, umbriel, or raw/unknown. */
   static QString detectCompositor();
 
   /** Window snapshot entry for a PID, or a default WindowInfo if unseen. */
@@ -147,6 +148,7 @@ private:
   std::shared_ptr<GnomeBackend> m_gnome;
   std::shared_ptr<HyprlandBackend> m_hyprland;
   std::shared_ptr<SwayBackend> m_sway;
+  std::shared_ptr<UmbrielBackend> m_umbriel;
   std::future<void> m_pollFuture;
 };
 

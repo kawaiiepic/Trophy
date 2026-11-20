@@ -471,6 +471,18 @@ jobs:
         run: |
           python3 packaging/draft_release.py --repo "$GITHUB_REPOSITORY" \
             --version-file VERSION --sha "$GITHUB_SHA" --assets release-input
+      # One-off publication requested for this fork, after complete CI.
+      - name: Publish verified Umbriel prerelease
+        if: github.repository == 'kawaiiepic/Trophy' && needs.build.outputs.version == '0.11.2'
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          test "$tag" = v0.11.2
+          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")
+          test "$(jq -r .draft <<<"$release_json")" = true
+          test "$(jq -r .target_commitish <<<"$release_json")" = "$GITHUB_SHA"
+          test "$(jq -r '.assets | length' <<<"$release_json")" -eq 5
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
 
   comment-pr:
     needs: verify-packages

@@ -124,7 +124,7 @@ The AppImage bundles application libraries, but still depends on compatible host
 
 If the captured window changes size, Trophy keeps the recording's output canvas fixed, fitting the picture with black bars as needed. Supported NVIDIA and VA-API paths perform resize work on the GPU; unsupported DMA-BUF imports can request shared-memory fallback. Software encoding uses shared-memory capture. Synthetic hardware tests do not establish compatibility with every compositor, AMD/Intel driver or sustained recording workload.
 
-Trophy includes window-monitor integrations for KDE/KWin, GNOME, Hyprland, and Sway. KDE Plasma and GNOME are supported and verified end to end, including the window helper, portal global shortcuts and capture. Hyprland and Sway have integrations with less live verification. Hardware encoding support likewise does not guarantee every DMA-BUF capture path works.
+Trophy includes window-monitor integrations for KDE/KWin, GNOME, Hyprland, Sway, and Umbriel. KDE Plasma and GNOME are supported and verified end to end, including the window helper, portal global shortcuts and capture. Hyprland, Sway, and Umbriel have integrations with less live verification. Hardware encoding support likewise does not guarantee every DMA-BUF capture path works.
 
 ## First-run setup
 
@@ -162,6 +162,12 @@ On GNOME Wayland, Trophy uses the bundled **Trophy Window Helper** extension for
 Choose **Install helper** during setup or **Repair** in Settings. This copies the helper to `$XDG_DATA_HOME/gnome-shell/extensions/trophy-monitor@trophy` (normally under `~/.local/share`) and requests enabling it.
 
 GNOME may require a logout/login before discovering a new extension or loading an update. Enable **Trophy Window Helper** in GNOME Extensions if necessary, then reopen Trophy. Setup reports Working only after receiving a valid window snapshot. If it does not, check for extension errors, unsupported Shell versions, or disabled user extensions. The extension supports GNOME Shell 45–51.
+
+### Umbriel window helper
+
+On Umbriel, Trophy uses the native read-only CLI (`umbriel windows --json`, `umbriel focused-window --json`, `umbriel outputs --json`) to track window identity, focus, fullscreen, process ID, and geometry. No extension needs installing. Ensure `umbriel` is on Trophy's PATH and the launched process can reach the current session's `UMBRIEL_SOCKET` or the normal runtime socket. The wizard reports Working after a valid snapshot, including when no windows are open.
+
+Capture independently requires PipeWire and a compatible xdg-desktop-portal screencast backend. Umbriel support has not yet been verified end-to-end on physical hardware.
 
 ## Keyboard shortcuts
 

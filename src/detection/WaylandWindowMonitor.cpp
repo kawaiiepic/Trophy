@@ -10,6 +10,7 @@
 #include "HyprlandBackend.h"
 #include "KWinBackend.h"
 #include "SwayBackend.h"
+#include "UmbrielBackend.h"
 #include "DetectorVersion.h"
 
 #include <QDebug>
@@ -84,7 +85,7 @@ void WaylandWindowMonitor::startMonitoring(bool repairBackend) {
 }
 
 void WaylandWindowMonitor::stopMonitoring() {
-  if (!m_monitoring && !m_kwin && !m_gnome && !m_hyprland && !m_sway) {
+  if (!m_monitoring && !m_kwin && !m_gnome && !m_hyprland && !m_sway && !m_umbriel) {
     return;
   }
 
@@ -96,6 +97,7 @@ void WaylandWindowMonitor::stopMonitoring() {
   if (m_gnome) polling = m_gnome;
   if (m_hyprland) polling = m_hyprland;
   if (m_sway) polling = m_sway;
+  if (m_umbriel) polling = m_umbriel;
   auto retire = [this](auto &backend) {
     if (!backend) return;
     disconnect(backend.get(), nullptr, this, nullptr);
@@ -107,6 +109,7 @@ void WaylandWindowMonitor::stopMonitoring() {
   retire(m_gnome);
   retire(m_hyprland);
   retire(m_sway);
+  retire(m_umbriel);
   if (m_pollFuture.valid())
     m_retired.push_back({std::move(polling), std::move(m_pollFuture)});
   // Retired workers must not leave a frozen, apparently visible window in
@@ -171,7 +174,7 @@ int WaylandWindowMonitor::helperVersion() const {
     return DetectorVersion::metadata(KWinBackend::installedScriptDir() + "/metadata.json", true);
   if (m_compositor == "gnome")
     return DetectorVersion::metadata(GnomeBackend::extensionDirectory() + "/metadata.json", false);
-  return 0; // Hyprland/Sway use compositor tools, not an installed Trophy script.
+  return 0; // CLI backends need no installed Trophy script.
 }
 
 bool WaylandWindowMonitor::trackingReady() const {
@@ -181,7 +184,8 @@ bool WaylandWindowMonitor::trackingReady() const {
            kwinScriptInstalled() && kwinScriptEnabled();
   return (m_gnome && m_gnome->isActive()) ||
          (m_hyprland && m_hyprland->isActive()) ||
-         (m_sway && m_sway->isActive());
+         (m_sway && m_sway->isActive()) ||
+         (m_umbriel && m_umbriel->isActive());
 }
 
 void WaylandWindowMonitor::repairTracking() {
@@ -281,7 +285,7 @@ void WaylandWindowMonitor::checkFocusedApp() {
     m_lastTrackingReady = ready;
     emit windowsChanged();
   }
-  if (!m_gnome && !m_hyprland && !m_sway && !m_pollOverride)
+  if (!m_gnome && !m_hyprland && !m_sway && !m_umbriel && !m_pollOverride)
     return; // KWin is push-only; housekeeping needs no polling worker.
   if (m_pollFuture.valid()) {
     if (m_pollFuture.wait_for(std::chrono::seconds(0)) !=
@@ -296,11 +300,12 @@ void WaylandWindowMonitor::checkFocusedApp() {
   try {
     m_pollFuture = std::async(std::launch::async,
         [gnome = m_gnome, hyprland = m_hyprland, sway = m_sway,
-         override = m_pollOverride]() {
+         umbriel = m_umbriel, override = m_pollOverride]() {
       if (override) { override(); return; }
       if (gnome) gnome->refresh();
       if (hyprland) hyprland->refresh();
       if (sway) sway->refresh();
+      if (umbriel) umbriel->refresh();
     });
   } catch (const std::exception &e) {
     qWarning() << "Unable to start compositor poll:" << e.what();
@@ -334,6 +339,8 @@ void WaylandWindowMonitor::onBackendWindowsUpdated() {
     ingestSnapshot(m_hyprland->windows());
   else if (m_sway && src == m_sway.get())
     ingestSnapshot(m_sway->windows());
+  else if (m_umbriel && src == m_umbriel.get())
+    ingestSnapshot(m_umbriel->windows());
 }
 
 void WaylandWindowMonitor::setupCompositorTracking(bool repairBackend) {
@@ -374,6 +381,15 @@ void WaylandWindowMonitor::setupCompositorTracking(bool repairBackend) {
     }
     if (!m_sway->start())
       qWarning() << "Sway backend failed to start; window data unavailable";
+  } else if (m_compositor.contains("umbriel", Qt::CaseInsensitive)) {
+    if (!m_umbriel) {
+      m_umbriel = std::make_shared<UmbrielBackend>();
+      const auto generation = m_generation;
+      connect(m_umbriel.get(), &UmbrielBackend::windowsUpdated, this,
+              [this, generation] { if (generation == m_generation) onBackendWindowsUpdated(); });
+    }
+    if (!m_umbriel->start())
+      qWarning() << "Umbriel backend failed to start; window data unavailable";
   } else {
     qWarning() << "Unknown compositor, window tracking unavailable:"
                << m_compositor;
@@ -397,6 +413,8 @@ QString WaylandWindowMonitor::detectCompositor() {
       return "hyprland";
     if (v.contains("sway"))
       return "sway";
+    if (v.contains("umbriel"))
+      return "umbriel";
     return v;
   };
 

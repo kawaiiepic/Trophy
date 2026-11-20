@@ -454,6 +454,8 @@ add_library(test_RecordingBackend STATIC
     ${CMAKE_SOURCE_DIR}/src/detection/HyprlandBackend.h
     ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.h
+    ${CMAKE_SOURCE_DIR}/src/detection/UmbrielBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/UmbrielBackend.h
     ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.h
     ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.cpp
     ${CMAKE_SOURCE_DIR}/tests/RecordingManagerLinkStubs.cpp
@@ -577,7 +579,9 @@ target_include_directories(test_Recording PRIVATE ${TEST_INCLUDE_DIRS} ${AVFORMA
 target_link_libraries(test_Recording PRIVATE ${TEST_LINK_LIBS} Qt6::Concurrent ${AVFORMAT_LIBRARIES} ${AVUTIL_LIBRARIES} ${AVCODEC_LIBRARIES})
 gtest_discover_tests(test_Recording)
 
-add_executable(test_GameDetectionService test_GameDetectionService.cpp ${CMAKE_SOURCE_DIR}/src/detection/GameDetectionService.cpp ${CMAKE_SOURCE_DIR}/src/detection/GameListModel.h ${CMAKE_SOURCE_DIR}/src/detection/GameWhitelist.cpp ${CMAKE_SOURCE_DIR}/src/detection/WaylandWindowMonitor.cpp ${CMAKE_SOURCE_DIR}/src/detection/WaylandWindowMonitor.h ${CMAKE_SOURCE_DIR}/src/detection/KWinBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/KWinBackend.h ${CMAKE_SOURCE_DIR}/src/detection/GnomeBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/GnomeBackend.h ${CMAKE_SOURCE_DIR}/src/detection/HyprlandBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/HyprlandBackend.h ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.h ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.h ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.cpp)
+add_executable(test_GameDetectionService test_GameDetectionService.cpp ${CMAKE_SOURCE_DIR}/src/detection/GameDetectionService.cpp ${CMAKE_SOURCE_DIR}/src/detection/GameListModel.h ${CMAKE_SOURCE_DIR}/src/detection/GameWhitelist.cpp ${CMAKE_SOURCE_DIR}/src/detection/WaylandWindowMonitor.cpp ${CMAKE_SOURCE_DIR}/src/detection/WaylandWindowMonitor.h ${CMAKE_SOURCE_DIR}/src/detection/KWinBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/KWinBackend.h ${CMAKE_SOURCE_DIR}/src/detection/GnomeBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/GnomeBackend.h ${CMAKE_SOURCE_DIR}/src/detection/HyprlandBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/HyprlandBackend.h ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.cpp ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.h
+    ${CMAKE_SOURCE_DIR}/src/detection/UmbrielBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/UmbrielBackend.h ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.h ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.cpp)
 target_include_directories(test_GameDetectionService PRIVATE ${TEST_INCLUDE_DIRS})
 target_compile_definitions(test_GameDetectionService PRIVATE TROPHY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(test_GameDetectionService PRIVATE ${TEST_LINK_LIBS} Qt6::Network Qt6::DBus)
@@ -860,6 +864,8 @@ add_executable(test_WindowMonitor test_WindowMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/HyprlandBackend.h
     ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/SwayBackend.h
+    ${CMAKE_SOURCE_DIR}/src/detection/UmbrielBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/UmbrielBackend.h
     ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.h
     ${CMAKE_SOURCE_DIR}/src/detection/WindowInfo.cpp
     ${CMAKE_SOURCE_DIR}/src/core/WindowService.cpp
@@ -975,3 +981,11 @@ gtest_discover_tests(test_HardwareInfo)
 if(EGL_FOUND)
     target_link_libraries(test_HardwareInfo PRIVATE PkgConfig::EGL)
 endif()
+
+# Umbriel IPC parser: fixture-only tests, no running compositor required.
+add_executable(test_UmbrielBackend test_UmbrielBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/UmbrielBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/detection/UmbrielBackend.h)
+target_include_directories(test_UmbrielBackend PRIVATE ${TEST_INCLUDE_DIRS})
+target_link_libraries(test_UmbrielBackend PRIVATE ${TEST_LINK_LIBS})
+gtest_discover_tests(test_UmbrielBackend)

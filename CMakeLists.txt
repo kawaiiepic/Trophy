@@ -330,7 +330,7 @@ set(DETECTION_SOURCES
 )
 
 
-list(APPEND DETECTION_SOURCES src/detection/WaylandWindowMonitor.cpp src/detection/KWinBackend.cpp src/detection/GlShimEnrollment.cpp src/detection/GnomeBackend.cpp src/detection/HyprlandBackend.cpp src/detection/SwayBackend.cpp src/detection/WindowInfo.cpp src/detection/VulkanLayer.cpp)
+list(APPEND DETECTION_SOURCES src/detection/WaylandWindowMonitor.cpp src/detection/KWinBackend.cpp src/detection/GlShimEnrollment.cpp src/detection/GnomeBackend.cpp src/detection/HyprlandBackend.cpp src/detection/SwayBackend.cpp src/detection/UmbrielBackend.cpp src/detection/WindowInfo.cpp src/detection/VulkanLayer.cpp)
 
 set(LIBRARY_SOURCES
     src/library/ShareExportEngine.cpp
@@ -415,7 +415,7 @@ set(DETECTION_HEADERS
 )
 
 
-list(APPEND DETECTION_HEADERS src/detection/WaylandWindowMonitor.h src/detection/KWinBackend.h src/detection/WindowInfo.h src/detection/GlShimEnrollment.h src/detection/GnomeBackend.h src/detection/HyprlandBackend.h src/detection/SwayBackend.h src/detection/VulkanLayer.h)
+list(APPEND DETECTION_HEADERS src/detection/WaylandWindowMonitor.h src/detection/KWinBackend.h src/detection/WindowInfo.h src/detection/GlShimEnrollment.h src/detection/GnomeBackend.h src/detection/HyprlandBackend.h src/detection/SwayBackend.h src/detection/UmbrielBackend.h src/detection/VulkanLayer.h)
 
 set(LIBRARY_HEADERS
     src/library/ShareExporter.h
