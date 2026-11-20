@@ -171,6 +171,22 @@ If the helper remains unavailable, first run `umbriel windows --json` from the s
 
 Capture independently requires PipeWire and a compatible xdg-desktop-portal screencast backend. Umbriel support has not yet been verified end-to-end on physical hardware.
 
+### Changing global shortcut keys on Umbriel
+
+Umbriel's GlobalShortcuts portal implements version 1 and does not provide
+the `ConfigureShortcuts` method. In Trophy's **Settings → Keyboard Shortcuts**,
+**Change Keys → Configure** opens an Umbriel-specific editor instead. Enter
+the recording and clip chords and choose **Apply now** to change Umbriel's
+runtime overrides. Those changes take effect immediately but do not survive
+a compositor restart.
+
+Use **Copy TOML** to copy the equivalent `global_shortcuts` section. Add it
+to your active Umbriel configuration (usually
+`~/.config/umbriel/config.toml`) or edit the existing section if one already
+exists. Umbriel watches configuration changes; `umbriel msg config-reload`
+can also trigger a reload. The app never silently overwrites the user's
+configuration or uses unsupported portal methods.
+
 ## Keyboard shortcuts
 
 | Action | Behavior |
