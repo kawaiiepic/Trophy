@@ -123,3 +123,27 @@ TEST(PipeWireVideoFormatTest, ModifierOfferCannotAccidentallyMatchSharedMemory) 
   spa_pod *result = nullptr;
   EXPECT_LT(spa_pod_filter(&resultBuilder, &result, shm, dma), 0);
 }
+
+TEST(PipeWireVideoFormatTest, DmaBufProducerOwnsPlaneCount) {
+  uint8_t storage[2048]{};
+  auto builder = SPA_POD_BUILDER_INIT(storage, sizeof(storage));
+  const spa_pod *format = buildPipeWireVideoFormat(&builder, {0x0200000000000001ULL});
+  ASSERT_NE(format, nullptr);
+
+  uint8_t requestStorage[512]{};
+  auto reqBuilder = SPA_POD_BUILDER_INIT(requestStorage, sizeof(requestStorage));
+  const spa_pod *request = buildPipeWireBufferRequest(&reqBuilder, format, true);
+  ASSERT_NE(request, nullptr);
+  EXPECT_EQ(spa_pod_find_prop(request, nullptr, SPA_PARAM_BUFFERS_blocks), nullptr)
+      << "The compositor may allocate 2-4 DMA-BUF planes for a compressed modifier";
+  EXPECT_NE(spa_pod_find_prop(request, nullptr, SPA_PARAM_BUFFERS_dataType), nullptr);
+
+  uint8_t shmStorage[512]{};
+  auto shmBuilder = SPA_POD_BUILDER_INIT(shmStorage, sizeof(shmStorage));
+  const spa_pod *shm = buildPipeWireBufferRequest(&shmBuilder, format, false);
+  ASSERT_NE(shm, nullptr);
+  const auto *blocks = spa_pod_find_prop(shm, nullptr, SPA_PARAM_BUFFERS_blocks);
+  ASSERT_NE(blocks, nullptr);
+  ASSERT_EQ(SPA_POD_TYPE(&blocks->value), SPA_TYPE_Int);
+  EXPECT_EQ(reinterpret_cast<const spa_pod_int *>(&blocks->value)->value, 1);
+}

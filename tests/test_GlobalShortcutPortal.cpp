@@ -24,7 +24,7 @@ class FakeGlobalShortcuts : public QObject, protected QDBusContext {
   Q_CLASSINFO("D-Bus Interface", "org.freedesktop.portal.GlobalShortcuts")
   Q_PROPERTY(uint version READ version CONSTANT)
 public:
-  uint version() const { return 1; }
+  uint version() const { return 2; }
 public slots:
   QDBusObjectPath CreateSession(const QVariantMap &) {
     ++m_creates;
@@ -137,7 +137,7 @@ public:
       if (holdAvailability)
         held = message;
       else
-        bus.send(message.createReply({QVariant::fromValue(QDBusVariant(1u))}));
+        bus.send(message.createReply({QVariant::fromValue(QDBusVariant(2u))}));
     } else if (method == "Configure") {
       holdAvailability = message.arguments().first().toString() == "HoldAvailability";
       bus.send(message.createReply());

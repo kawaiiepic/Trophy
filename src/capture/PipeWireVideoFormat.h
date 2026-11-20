@@ -68,4 +68,24 @@ inline uint32_t pipeWireVideoBufferTypes(const spa_pod *format, bool dmaBufEnabl
              : (1u << SPA_DATA_MemFd) | (1u << SPA_DATA_MemPtr);
 }
 
+// The PipeWire producer allocates DMA-BUFs and knows the actual GBM plane
+// count for its selected DRM modifier. Never force blocks=1 on a consumer:
+// AMD DCC formats can expose several SPA data blocks (image + metadata).
+// For shared memory the usual single contiguous block is still required.
+inline const spa_pod *buildPipeWireBufferRequest(
+    spa_pod_builder *builder, const spa_pod *format, bool useDmaBuf) {
+  const uint32_t types = pipeWireVideoBufferTypes(format, useDmaBuf);
+  if (useDmaBuf && pipeWireVideoHasModifier(format)) {
+    return static_cast<const spa_pod *>(spa_pod_builder_add_object(
+        builder, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
+        SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(4, 1, 32),
+        SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(types)));
+  }
+  return static_cast<const spa_pod *>(spa_pod_builder_add_object(
+      builder, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
+      SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(4, 1, 32),
+      SPA_PARAM_BUFFERS_blocks, SPA_POD_Int(1),
+      SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(types)));
+}
+
 } // namespace TrophyBackend

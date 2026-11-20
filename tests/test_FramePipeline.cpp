@@ -77,6 +77,64 @@ public:
   std::vector<FrameDescriptor> frames; // hold fds so they stay valid
 };
 
+// QueuedFrame owns all DMA-BUF planes, including auxiliary metadata planes.
+TEST(QueuedFrameTest, MultiPlaneDuplicatesSurviveProducerCloseAndMove) {
+  const int source0 = makeFd(), source1 = makeFd();
+  int owned0 = -1, owned1 = -1;
+  {
+    VideoFrame borrowed{};
+    borrowed.isDmaBuf = true;
+    borrowed.dmaBufFd = source0;
+    borrowed.dmaBufPlanes = {{source0, 1024, 0, 0}, {source1, 256, 4096, 0}};
+    QueuedFrame frame(borrowed);
+    ASSERT_TRUE(frame.isDmaBuf);
+    ASSERT_EQ(frame.dmaBufPlanes.size(), 2u);
+    owned0 = frame.dmaBufPlanes[0].fd;
+    owned1 = frame.dmaBufPlanes[1].fd;
+    EXPECT_NE(owned0, source0);
+    EXPECT_NE(owned1, source1);
+    EXPECT_EQ(frame.dmaBufFd, owned0);
+    close(source0);
+    close(source1);
+    EXPECT_TRUE(fdIsOpen(owned0));
+    EXPECT_TRUE(fdIsOpen(owned1));
+    QueuedFrame moved(std::move(frame));
+    EXPECT_EQ(frame.dmaBufFd, -1);
+    EXPECT_TRUE(frame.dmaBufPlanes.empty());
+    EXPECT_EQ(moved.dmaBufPlanes.size(), 2u);
+    EXPECT_TRUE(fdIsOpen(owned1));
+  }
+  EXPECT_FALSE(fdIsOpen(owned0));
+  EXPECT_FALSE(fdIsOpen(owned1));
+}
+
+TEST(QueuedFrameTest, MultiPlaneMoveAssignmentReleasesOldFds) {
+  const int srcA = makeFd(), srcB = makeFd(), srcC = makeFd();
+  int previous = -1, newPlane = -1;
+  {
+    VideoFrame first{};
+    first.isDmaBuf = true;
+    first.dmaBufFd = srcA;
+    first.dmaBufPlanes = {{srcA, 256, 0, 0}};
+    QueuedFrame target(first);
+    previous = target.dmaBufFd;
+    VideoFrame second{};
+    second.isDmaBuf = true;
+    second.dmaBufFd = srcB;
+    second.dmaBufPlanes = {{srcB, 512, 0, 0}, {srcC, 128, 0, 0}};
+    QueuedFrame replacement(second);
+    newPlane = replacement.dmaBufPlanes[1].fd;
+    target = std::move(replacement);
+    EXPECT_FALSE(fdIsOpen(previous));
+    EXPECT_EQ(replacement.dmaBufFd, -1);
+    EXPECT_TRUE(fdIsOpen(newPlane));
+  }
+  close(srcA);
+  close(srcB);
+  close(srcC);
+  EXPECT_FALSE(fdIsOpen(newPlane));
+}
+
 // --- FrameDescriptor RAII ---
 
 TEST(FrameDescriptorTest, MoveTransfersOwnership) {

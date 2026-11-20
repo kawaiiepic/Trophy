@@ -20,6 +20,16 @@ namespace TrophyBackend {
 /**
  * @brief Video frame data passed to callbacks
  */
+// Each SPA data block describes one DMA-BUF plane. Compressed DRM modifiers
+// may carry auxiliary metadata planes; their FDs/strides/offsets must survive
+// until the hardware encoder finishes importing the frame.
+struct DmaBufPlane {
+  int fd = -1;
+  int stride = 0;
+  uint32_t offset = 0;
+  uint32_t size = 0; // Producer-reported size; some DMA-BUFs leave this zero.
+};
+
 struct VideoFrame {
   const uint8_t *data; // Frame pixel data
   int width;           // Frame width in pixels
@@ -35,6 +45,9 @@ struct VideoFrame {
   uint64_t drmModifier = 0;
   int dmaBufStride = 0;
   int dmaBufOffset = 0;
+  // Borrowed FDs on capture callbacks; duplicated by QueuedFrame. If empty,
+  // the legacy one-plane dmaBufFd/Stride/Offset fields are used.
+  std::vector<DmaBufPlane> dmaBufPlanes;
   std::shared_ptr<void> bufferLease; // delays producer reuse, separate from fd ownership
   std::function<void()> requestCpuFallback;
   // Optional immutable CPU snapshot, independent of the producer's mapping.
@@ -71,11 +84,32 @@ struct QueuedFrame : public VideoFrame {
       ownedData.assign(other.data,
                        other.data + (size_t(other.stride) * other.height));
       data = ownedData.data();
+    } else if (other.isDmaBuf && !other.dmaBufPlanes.empty()) {
+      // Own one duplicate per plane, even when the exporter repeats the same
+      // kernel DMA-BUF in more than one SPA data block. The primary fd aliases
+      // dmaBufPlanes[0].fd and must not be closed separately.
+      dmaBufPlanes.clear();
+      dmaBufPlanes.reserve(other.dmaBufPlanes.size());
+      for (const DmaBufPlane &plane : other.dmaBufPlanes) {
+        const int duplicate = plane.fd >= 0 ? ::dup(plane.fd) : -1;
+        if (duplicate < 0) {
+          for (const DmaBufPlane &owned : dmaBufPlanes)
+            ::close(owned.fd);
+          dmaBufPlanes.clear();
+          dmaBufFd = -1;
+          isDmaBuf = false;
+          return;
+        }
+        DmaBufPlane owned = plane;
+        owned.fd = duplicate;
+        dmaBufPlanes.push_back(owned);
+      }
+      dmaBufFd = dmaBufPlanes.front().fd;
     } else if (other.isDmaBuf && other.dmaBufFd >= 0) {
-      // Dup pins allocation lifetime; bufferLease separately prevents reuse.
+      // Legacy one-plane path.
       dmaBufFd = ::dup(other.dmaBufFd);
       if (dmaBufFd < 0)
-        isDmaBuf = false; // dup failed – frame is unusable, drop silently
+        isDmaBuf = false;
     }
   }
 
@@ -86,18 +120,19 @@ struct QueuedFrame : public VideoFrame {
     if (!ownedData.empty())
       data = ownedData.data();
     other.dmaBufFd = -1;
+    other.dmaBufPlanes.clear();
   }
 
   // Move assignment – transfer fd ownership
   QueuedFrame &operator=(QueuedFrame &&other) noexcept {
     if (this != &other) {
-      if (isDmaBuf && dmaBufFd >= 0)
-        ::close(dmaBufFd);
+      releaseDmaBufFds();
       static_cast<VideoFrame &>(*this) = static_cast<VideoFrame &&>(other);
       ownedData = std::move(other.ownedData);
       if (!ownedData.empty())
         data = ownedData.data();
       other.dmaBufFd = -1;
+      other.dmaBufPlanes.clear();
     }
     return *this;
   }
@@ -105,9 +140,19 @@ struct QueuedFrame : public VideoFrame {
   QueuedFrame(const QueuedFrame &) = delete;
   QueuedFrame &operator=(const QueuedFrame &) = delete;
 
-  ~QueuedFrame() {
-    if (isDmaBuf && dmaBufFd >= 0)
+  ~QueuedFrame() { releaseDmaBufFds(); }
+
+private:
+  void releaseDmaBufFds() {
+    // The fd alias is not an additional ownership when planes are present.
+    if (!dmaBufPlanes.empty()) {
+      for (const DmaBufPlane &plane : dmaBufPlanes)
+        if (plane.fd >= 0) ::close(plane.fd);
+      dmaBufPlanes.clear();
+    } else if (isDmaBuf && dmaBufFd >= 0) {
       ::close(dmaBufFd);
+    }
+    dmaBufFd = -1;
   }
 };
 

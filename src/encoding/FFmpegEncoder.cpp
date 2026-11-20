@@ -268,10 +268,16 @@ AVFrame *vaapiImportScale(VaapiImportState &state, const VideoFrame &input,
     av_frame_free(&drm);
     return nullptr;
   };
+  const size_t planeCount = input.dmaBufPlanes.empty() ? 1 : input.dmaBufPlanes.size();
   if (input.drmFormat != DRM_FORMAT_XRGB8888 || input.dmaBufFd < 0 ||
       input.width <= 0 || input.height <= 0 || input.width > 65535 || input.height > 65535 ||
+      planeCount == 0 || planeCount > AV_DRM_MAX_PLANES ||
       input.dmaBufStride < int64_t(input.width) * 4 || input.dmaBufOffset < 0)
     return fail(QStringLiteral("Unsupported VA-API DMA-BUF descriptor"));
+  for (const DmaBufPlane &plane : input.dmaBufPlanes) {
+    if (plane.fd < 0 || plane.stride <= 0)
+      return fail(QStringLiteral("Invalid VA-API DMA-BUF auxiliary plane"));
+  }
   if (!state.device) state.device = av_buffer_ref(device);
   if (!state.device) return fail(QStringLiteral("VA-API device reference failed"));
   auto *dev = reinterpret_cast<AVHWDeviceContext *>(device->data);
@@ -312,29 +318,59 @@ AVFrame *vaapiImportScale(VaapiImportState &state, const VideoFrame &input,
   auto *desc = static_cast<AVDRMFrameDescriptor *>(av_mallocz(sizeof(AVDRMFrameDescriptor)));
   if (!desc) return fail(QStringLiteral("VA-API DRM descriptor allocation failed"));
   auto *lease = new (std::nothrow) std::shared_ptr<void>(input.bufferLease);
-  const int fd = dup(input.dmaBufFd);
-  if (!lease || fd < 0) {
-    delete lease; if (fd >= 0) close(fd); av_free(desc);
+  if (!lease) {
+    av_free(desc);
     return fail(QStringLiteral("VA-API DMA-BUF ownership failed"));
   }
-  desc->nb_objects = 1;
-  desc->objects[0].fd = fd;
-  desc->objects[0].size = size_t(input.dmaBufStride) * input.height + input.dmaBufOffset;
-  desc->objects[0].format_modifier = input.drmModifier;
   desc->nb_layers = 1;
   desc->layers[0].format = input.drmFormat;
-  desc->layers[0].nb_planes = 1;
-  desc->layers[0].planes[0].pitch = input.dmaBufStride;
-  desc->layers[0].planes[0].offset = input.dmaBufOffset;
+  desc->layers[0].nb_planes = static_cast<int>(planeCount);
+  // One owned DMA-BUF object per SPA data block, even if GBM exported
+  // multiple plane descriptors referring to the same kernel allocation.
+  // Duplication and AVBufferRef lifetime keep each plane valid through VPP.
+  for (size_t i = 0; i < planeCount; ++i) {
+    const DmaBufPlane plane = input.dmaBufPlanes.empty()
+        ? DmaBufPlane{input.dmaBufFd, input.dmaBufStride,
+                      static_cast<uint32_t>(input.dmaBufOffset), 0}
+        : input.dmaBufPlanes[i];
+    const int fd = dup(plane.fd);
+    if (fd < 0) {
+      for (int n = 0; n < desc->nb_objects; ++n)
+        close(desc->objects[n].fd);
+      delete lease;
+      av_free(desc);
+      return fail(QStringLiteral("VA-API DMA-BUF plane duplication failed"));
+    }
+    auto &object = desc->objects[desc->nb_objects++];
+    object.fd = fd;
+    // Linux DMA-BUF fds expose their allocation size via SEEK_END. PipeWire
+    // producers can leave spa_data.maxsize at zero for GPU allocations.
+    // Only approximate as a last resort; never infer an auxiliary plane's
+    // size by treating it as a full-height RGB image.
+    const off_t end = lseek(fd, 0, SEEK_END);
+    object.size = end > 0 ? static_cast<size_t>(end)
+        : std::max<size_t>(plane.size,
+            size_t(plane.offset) + size_t(plane.stride) *
+                (i == 0 ? size_t(input.height) : 1));
+    object.format_modifier = input.drmModifier;
+    auto &layout = desc->layers[0].planes[i];
+    layout.object_index = static_cast<int>(i);
+    layout.pitch = plane.stride;
+    layout.offset = plane.offset;
+  }
   drm->buf[0] = av_buffer_create(reinterpret_cast<uint8_t *>(desc), sizeof(*desc),
       [](void *opaque, uint8_t *bytes) {
         auto *descriptor = reinterpret_cast<AVDRMFrameDescriptor *>(bytes);
-        close(descriptor->objects[0].fd);
+        for (int i = 0; i < descriptor->nb_objects; ++i)
+          close(descriptor->objects[i].fd);
         av_free(descriptor);
         delete static_cast<std::shared_ptr<void> *>(opaque);
       }, lease, 0);
   if (!drm->buf[0]) {
-    delete lease; close(fd); av_free(desc);
+    delete lease;
+    for (int i = 0; i < desc->nb_objects; ++i)
+      close(desc->objects[i].fd);
+    av_free(desc);
     return fail(QStringLiteral("VA-API DRM buffer allocation failed"));
   }
   drm->data[0] = reinterpret_cast<uint8_t *>(desc);
@@ -522,6 +558,12 @@ CudaImportState::CacheEntry *cudaImportCacheAcquire(CudaImportState &st,
   }
   ++st.cacheMisses;
 
+  // NVENC's EGL/CUDA importer currently accepts one image plane; do not
+  // misinterpret AMD auxiliary metadata planes as a linear RGB allocation.
+  if (frame.dmaBufPlanes.size() > 1) {
+    st.error = QStringLiteral("EGL/CUDA multi-plane import unavailable");
+    return nullptr;
+  }
   const int fd = dup(frame.dmaBufFd);
   if (fd < 0) {
     st.error = QStringLiteral("dup(dmabuf) failed");

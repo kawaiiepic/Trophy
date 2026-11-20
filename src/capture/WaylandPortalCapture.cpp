@@ -1361,16 +1361,10 @@ void WaylandPortalCapture::on_stream_param_changed(
       uint8_t bufBuf[512];
       spa_pod_builder bb = SPA_POD_BUILDER_INIT(bufBuf, sizeof(bufBuf));
 
-      // Tiled DMA-BUF and shared memory cannot share the same negotiated
-      // format. SHM fallback requires the modifier-less format above.
+      // Let the producer choose the DMA-BUF plane count. Forcing one
+      // SPA block is invalid with multi-plane AMD DRM modifiers.
       const spa_pod *bufParams[1];
-      bufParams[0] = reinterpret_cast<const spa_pod *>(spa_pod_builder_add_object(
-          &bb,
-          SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
-          SPA_PARAM_BUFFERS_buffers,  SPA_POD_CHOICE_RANGE_Int(4, 1, 32),
-          SPA_PARAM_BUFFERS_blocks,   SPA_POD_Int(1),
-          SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(
-              pipeWireVideoBufferTypes(param, self->m_useDmaBuf))));
+      bufParams[0] = buildPipeWireBufferRequest(&bb, param, self->m_useDmaBuf);
 
       pw_stream_update_params(self->m_pw_stream, bufParams, 1);
       qDebug() << "Wayland Portal: requested buffer transport:"
@@ -1441,18 +1435,38 @@ void WaylandPortalCapture::on_stream_process(void *data) {
   frame.timestamp = ts;
 
   if (d.type == SPA_DATA_DmaBuf && d.fd >= 0) {
-    // This importer supports one image plane only; never misinterpret an
-    // auxiliary compression plane as an ordinary single-plane RGB buffer.
-    if (buf->n_datas != 1 || d.chunk->stride <= 0) {
+    // Pass all planes through the queued frame and VA-API DRM descriptor.
+    // Auxiliary planes contain compression metadata and cannot be discarded.
+    bool validPlanes = buf->n_datas <= 4;
+    if (validPlanes) {
+      frame.dmaBufPlanes.reserve(buf->n_datas);
+      for (uint32_t index = 0; index < buf->n_datas; ++index) {
+        const spa_data &plane = buf->datas[index];
+        if (plane.type != SPA_DATA_DmaBuf || plane.fd < 0 || !plane.chunk ||
+            (plane.chunk->flags & SPA_CHUNK_FLAG_CORRUPTED) ||
+            plane.chunk->stride <= 0) {
+          validPlanes = false;
+          break;
+        }
+        frame.dmaBufPlanes.push_back({
+            static_cast<int>(plane.fd), plane.chunk->stride,
+            plane.chunk->offset, plane.maxsize});
+      }
+    }
+    if (!validPlanes) {
       if (!self->m_multiPlaneWarned) {
         self->m_multiPlaneWarned = true;
-        qWarning() << "Unsupported DMA-BUF plane count/stride:"
-                   << buf->n_datas << d.chunk->stride;
+        qWarning() << "Unsupported DMA-BUF plane descriptors:" << buf->n_datas;
       }
       ++self->m_droppedBuffers;
       self->m_bufferLeases->requestSharedMemory();
       pw_stream_queue_buffer(self->m_pw_stream, b);
       return;
+    }
+    if (frame.dmaBufPlanes.size() > 1 && !self->m_multiPlaneWarned) {
+      self->m_multiPlaneWarned = true;
+      qInfo() << "Wayland Portal: importing multi-plane DMA-BUF with"
+              << frame.dmaBufPlanes.size() << "planes";
     }
     frame.bufferLease = self->m_bufferLeases->retain(b);
     frame.requestCpuFallback = [leases = self->m_bufferLeases] {
