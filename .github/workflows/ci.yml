@@ -474,13 +474,13 @@ jobs:
       # Publish this fork's Umbriel hotfix only after the full verified
       # build, test and package pipeline. Drafts are not returned by the
       # releases/tags endpoint, so discover the draft by numeric release ID.
-      - name: Publish verified Umbriel v0.11.4 prerelease
-        if: github.repository == 'kawaiiepic/Trophy' && needs.build.outputs.version == '0.11.4'
+      - name: Publish verified Umbriel v0.11.5 prerelease
+        if: github.repository == 'kawaiiepic/Trophy' && needs.build.outputs.version == '0.11.5'
         run: |
           set -euo pipefail
           repo="$GITHUB_REPOSITORY"
           tag="v${VERSION}"
-          test "$tag" = v0.11.4
+          test "$tag" = v0.11.5
           ref=$(gh api "repos/$repo/git/ref/tags/$tag")
           jq -e --arg sha "$GITHUB_SHA" \
             '.object.type == "commit" and .object.sha == $sha' <<<"$ref" >/dev/null
@@ -494,10 +494,10 @@ jobs:
             all(.assets[]; .state == "uploaded" and
               (.digest | startswith("sha256:"))) and
             ([.assets[].name] | sort) ==
-              (["SHA256SUMS", "Trophy-0.11.4-amd64.deb",
-                "Trophy-0.11.4-x86_64.AppImage",
-                "Trophy-0.11.4-x86_64.rpm",
-                "Trophy-0.11.4.tar.xz"] | sort)
+              (["SHA256SUMS", "Trophy-0.11.5-amd64.deb",
+                "Trophy-0.11.5-x86_64.AppImage",
+                "Trophy-0.11.5-x86_64.rpm",
+                "Trophy-0.11.5.tar.xz"] | sort)
           ' <<<"$release" >/dev/null
           gh api --method PATCH "repos/$repo/releases/$id" \
             -F draft=false -F prerelease=true --jq '.html_url'
