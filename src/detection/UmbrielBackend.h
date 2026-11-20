@@ -11,13 +11,12 @@
 #include <QMutex>
 #include <QObject>
 #include <QString>
-#include <QStringList>
 #include <atomic>
 
 namespace TrophyBackend {
 
-// Reads Umbriel's read-only JSON IPC via its CLI; no compositor-side helper
-// is installed. Opaque foreign toplevel IDs are represented by stable keys.
+// Talks to Umbriel's read-only Unix socket without executing its CLI.
+// Opaque foreign toplevel IDs are represented by stable keys.
 class UmbrielBackend : public QObject {
   Q_OBJECT
 public:
@@ -35,11 +34,16 @@ public:
                                          const QByteArray &outputsJson = {});
   static QString signatureFor(const QList<WindowInfo> &windows);
 
+  // The raw socket replies wrap successful command data in {"ok": ...}.
+  static QByteArray unwrapReply(const QByteArray &reply, QString *error = nullptr);
+
 signals:
   void windowsUpdated();
 
 private:
-  static QByteArray runUmbriel(const QStringList &args);
+  static QString socketPath();
+  static QByteArray query(const QString &command, QString *error = nullptr);
+  QString m_lastError;
   mutable QMutex m_mutex;
   QList<WindowInfo> m_windows;
   QString m_lastSignature;

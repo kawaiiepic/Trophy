@@ -872,7 +872,7 @@ add_executable(test_WindowMonitor test_WindowMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/core/WindowService.h
 )
 target_include_directories(test_WindowMonitor PRIVATE ${TEST_INCLUDE_DIRS})
-target_link_libraries(test_WindowMonitor PRIVATE ${TEST_LINK_LIBS} Qt6::DBus)
+target_link_libraries(test_WindowMonitor PRIVATE ${TEST_LINK_LIBS} Qt6::DBus Qt6::Network)
 gtest_discover_tests(test_WindowMonitor)
 
 # Never let the fake Shell own a name on the user's real session bus.
@@ -987,5 +987,5 @@ add_executable(test_UmbrielBackend test_UmbrielBackend.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/UmbrielBackend.cpp
     ${CMAKE_SOURCE_DIR}/src/detection/UmbrielBackend.h)
 target_include_directories(test_UmbrielBackend PRIVATE ${TEST_INCLUDE_DIRS})
-target_link_libraries(test_UmbrielBackend PRIVATE ${TEST_LINK_LIBS})
+target_link_libraries(test_UmbrielBackend PRIVATE ${TEST_LINK_LIBS} Qt6::Network)
 gtest_discover_tests(test_UmbrielBackend)

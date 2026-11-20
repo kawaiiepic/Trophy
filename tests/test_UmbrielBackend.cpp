@@ -56,3 +56,35 @@ TEST(UmbrielBackendTest, ChangeSignatureTracksFocusAndFullscreen) {
   auto c = UmbrielBackend::parseWindows(R"json([{"id":"1","active":true,"fullscreen":true}])json");
   EXPECT_NE(UmbrielBackend::signatureFor(b), UmbrielBackend::signatureFor(c));
 }
+
+TEST(UmbrielBackendTest, UnwrapsRawSocketArrayAndObjectReplies) {
+  QString error;
+  const QByteArray windows = UmbrielBackend::unwrapReply(
+      R"json({"ok":[{"id":"opaque","pid":99,"active":true}]})json", &error);
+  EXPECT_TRUE(error.isEmpty());
+  const auto rows = UmbrielBackend::parseWindows(windows);
+  ASSERT_EQ(rows.size(), 1);
+  EXPECT_EQ(rows[0].pid, 99);
+  EXPECT_TRUE(rows[0].focused);
+
+  const QByteArray focused = UmbrielBackend::unwrapReply(
+      R"json({"ok":{"id":"opaque","app_id":"game"}})json", &error);
+  EXPECT_TRUE(error.isEmpty());
+  EXPECT_FALSE(focused.isEmpty());
+  const auto withFocus = UmbrielBackend::parseWindows(windows, focused);
+  ASSERT_EQ(withFocus.size(), 1);
+  EXPECT_TRUE(withFocus[0].focused);
+}
+
+TEST(UmbrielBackendTest, DetectsSocketErrorsAndMalformedReplies) {
+  QString error;
+  EXPECT_TRUE(UmbrielBackend::unwrapReply(
+      R"json({"err":"no focused window"})json", &error).isEmpty());
+  EXPECT_EQ(error, QStringLiteral("no focused window"));
+  error.clear();
+  EXPECT_TRUE(UmbrielBackend::unwrapReply("not json", &error).isEmpty());
+  EXPECT_EQ(error, QStringLiteral("invalid JSON reply"));
+  error.clear();
+  EXPECT_TRUE(UmbrielBackend::unwrapReply(R"json({"oops":1})json", &error).isEmpty());
+  EXPECT_EQ(error, QStringLiteral("reply missing 'ok'"));
+}

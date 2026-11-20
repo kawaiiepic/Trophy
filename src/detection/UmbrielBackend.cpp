@@ -11,39 +11,146 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QElapsedTimer>
+#include <QJsonValue>
+#include <QLocalSocket>
 #include <QMutexLocker>
-#include <QProcess>
 #include <QSize>
-#include <QStandardPaths>
 #include <algorithm>
 
 namespace TrophyBackend {
 
 UmbrielBackend::UmbrielBackend(QObject *parent) : QObject(parent) {}
 
+QString UmbrielBackend::socketPath() {
+  // Match Umbriel's own CLI path selection. UMBRIEL_SOCKET permits
+  // nested sessions to use an explicit socket.
+  const QString override = qEnvironmentVariable("UMBRIEL_SOCKET");
+  if (!override.isEmpty())
+    return override;
+  const QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+  const QString display = qEnvironmentVariable("WAYLAND_DISPLAY");
+  if (runtime.isEmpty() || display.isEmpty())
+    return {};
+  return runtime + QStringLiteral("/umbriel-") + display +
+         QStringLiteral(".sock");
+}
+
 bool UmbrielBackend::start() {
-  if (QStandardPaths::findExecutable("umbriel").isEmpty()) {
-    qWarning() << "Umbriel backend: umbriel CLI not found on PATH";
+  const QString path = socketPath();
+  if (path.isEmpty()) {
+    qWarning() << "Umbriel window tracking: cannot locate IPC socket."
+                  " Check XDG_RUNTIME_DIR, WAYLAND_DISPLAY and UMBRIEL_SOCKET.";
     return false;
   }
-  qInfo() << "Umbriel window tracking armed (read-only JSON IPC polling)";
+  qInfo() << "Umbriel window tracking armed (native read-only socket IPC)"
+          << path;
   return true;
 }
 
-QByteArray UmbrielBackend::runUmbriel(const QStringList &args) {
-  const QString executable = QStandardPaths::findExecutable("umbriel");
-  if (executable.isEmpty())
-    return {};
-  QProcess process;
-  process.start(executable, args);
-  if (!process.waitForStarted(1500) || !process.waitForFinished(2000)) {
-    process.kill();
-    process.waitForFinished(500);
+// Umbriel IPC is one newline-delimited JSON object per request and reply.
+// Unlike the CLI, its raw socket reply is wrapped in {"ok": ...}.
+QByteArray UmbrielBackend::unwrapReply(const QByteArray &reply,
+                                      QString *error) {
+  QJsonParseError parseError;
+  const QJsonDocument doc = QJsonDocument::fromJson(reply, &parseError);
+  if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+    if (error)
+      *error = QStringLiteral("invalid JSON reply");
     return {};
   }
-  if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
+  const QJsonObject response = doc.object();
+  if (response.contains("err")) {
+    if (error)
+      *error = response.value("err").toString(QStringLiteral("IPC error"));
     return {};
-  return process.readAllStandardOutput();
+  }
+  if (!response.contains("ok")) {
+    if (error)
+      *error = QStringLiteral("reply missing 'ok'");
+    return {};
+  }
+  const QJsonValue ok = response.value("ok");
+  if (ok.isArray())
+    return QJsonDocument(ok.toArray()).toJson(QJsonDocument::Compact);
+  if (ok.isObject())
+    return QJsonDocument(ok.toObject()).toJson(QJsonDocument::Compact);
+  if (ok.isNull())
+    return QByteArrayLiteral("null");
+  if (error)
+    *error = QStringLiteral("unexpected IPC response type");
+  return {};
+}
+
+QByteArray UmbrielBackend::query(const QString &command, QString *error) {
+  const QString path = socketPath();
+  if (path.isEmpty()) {
+    if (error)
+      *error = QStringLiteral("UMBRIEL_SOCKET or XDG_RUNTIME_DIR/WAYLAND_DISPLAY missing");
+    return {};
+  }
+  QLocalSocket socket;
+  socket.connectToServer(path, QIODevice::ReadWrite);
+  if (!socket.waitForConnected(1200)) {
+    if (error)
+      *error = QStringLiteral("cannot connect to %1: %2")
+                   .arg(path, socket.errorString());
+    return {};
+  }
+
+  QJsonObject request;
+  request.insert(QStringLiteral("cmd"), command);
+  const QString token = qEnvironmentVariable("UMBRIEL_LAUNCH_TOKEN");
+  if (!token.isEmpty())
+    request.insert(QStringLiteral("launch_token"), token);
+  const QByteArray line = QJsonDocument(request).toJson(QJsonDocument::Compact)
+                          + '\n';
+  if (socket.write(line) != line.size()) {
+    if (error)
+      *error = QStringLiteral("IPC request write failed: %1").arg(socket.errorString());
+    return {};
+  }
+  if (socket.bytesToWrite() > 0 && !socket.waitForBytesWritten(1200)) {
+    if (error)
+      *error = QStringLiteral("IPC request send timed out: %1").arg(socket.errorString());
+    return {};
+  }
+
+  // Umbriel sends one complete JSON line and closes the connection. Read
+  // the line without depending on EOF or launching a second executable
+  // inside Trophy's bundled AppImage runtime.
+  QByteArray buffer;
+  QElapsedTimer clock;
+  clock.start();
+  constexpr int timeoutMs = 2000;
+  constexpr qsizetype maxReplyBytes = 4 * 1024 * 1024;
+  while (!buffer.contains('\n') && clock.elapsed() < timeoutMs) {
+    buffer += socket.readAll();
+    if (buffer.size() > maxReplyBytes) {
+      if (error)
+        *error = QStringLiteral("IPC reply exceeded size limit");
+      return {};
+    }
+    if (buffer.contains('\n'))
+      break;
+    if (socket.state() == QLocalSocket::UnconnectedState)
+      break;
+    socket.waitForReadyRead(qMax(1, timeoutMs - int(clock.elapsed())));
+  }
+  buffer += socket.readAll();
+  if (buffer.size() > maxReplyBytes) {
+    if (error)
+      *error = QStringLiteral("IPC reply exceeded size limit");
+    return {};
+  }
+  const int newline = buffer.indexOf('\n');
+  if (newline < 0) {
+    if (error)
+      *error = QStringLiteral("IPC reply timed out or closed early: %1")
+                   .arg(socket.errorString());
+    return {};
+  }
+  return unwrapReply(buffer.left(newline), error);
 }
 
 QList<WindowInfo> UmbrielBackend::parseWindows(
@@ -143,10 +250,16 @@ QString UmbrielBackend::signatureFor(const QList<WindowInfo> &windows) {
 }
 
 void UmbrielBackend::refresh() {
-  const QByteArray rawWindows = runUmbriel({"windows", "--json"});
-  // A disconnected IPC socket must not keep reporting helper "Working".
-  const QJsonDocument document = QJsonDocument::fromJson(rawWindows);
-  if (!document.isArray()) {
+  QString error;
+  const QByteArray rawWindows = query(QStringLiteral("windows"), &error);
+  const QJsonDocument doc = QJsonDocument::fromJson(rawWindows);
+  if (!doc.isArray()) {
+    if (error.isEmpty())
+      error = QStringLiteral("window list is not a JSON array");
+    if (m_lastError != error) {
+      qWarning() << "Umbriel window helper unavailable:" << error;
+      m_lastError = error;
+    }
     if (m_active.exchange(false)) {
       {
         QMutexLocker lock(&m_mutex);
@@ -157,13 +270,17 @@ void UmbrielBackend::refresh() {
     }
     return;
   }
-  const QList<WindowInfo> snapshot =
-      parseWindows(rawWindows, runUmbriel({"focused-window", "--json"}),
-                   runUmbriel({"outputs", "--json"}));
+
+  const QByteArray focused = query(QStringLiteral("focused-window"));
+  const QByteArray outputs = query(QStringLiteral("outputs"));
+  const QList<WindowInfo> snapshot = parseWindows(rawWindows, focused, outputs);
   const QString signature = signatureFor(snapshot);
   {
     QMutexLocker lock(&m_mutex);
-    m_active.store(true); // Valid empty array still means healthy helper.
+    const bool wasActive = m_active.exchange(true);
+    if (!wasActive)
+      qInfo() << "Umbriel IPC connected; game window helper ready";
+    m_lastError.clear();
     if (signature == m_lastSignature)
       return;
     m_lastSignature = signature;

@@ -471,6 +471,37 @@ jobs:
         run: |
           python3 packaging/draft_release.py --repo "$GITHUB_REPOSITORY" \
             --version-file VERSION --sha "$GITHUB_SHA" --assets release-input
+      # Publish this fork's Umbriel hotfix only after the full verified
+      # build, test and package pipeline. Drafts are not returned by the
+      # releases/tags endpoint, so discover the draft by numeric release ID.
+      - name: Publish verified Umbriel v0.11.3 prerelease
+        if: github.repository == 'kawaiiepic/Trophy' && needs.build.outputs.version == '0.11.3'
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          tag="v${VERSION}"
+          test "$tag" = v0.11.3
+          ref=$(gh api "repos/$repo/git/ref/tags/$tag")
+          jq -e --arg sha "$GITHUB_SHA" \
+            '.object.type == "commit" and .object.sha == $sha' <<<"$ref" >/dev/null
+          releases=$(gh api "repos/$repo/releases?per_page=100")
+          id=$(jq -er --arg tag "$tag" \
+            '[.[] | select(.tag_name == $tag)] | if length == 1 then .[0].id else error("release lookup not unique") end' <<<"$releases")
+          release=$(gh api "repos/$repo/releases/$id")
+          jq -e --arg tag "$tag" --arg sha "$GITHUB_SHA" '
+            .draft == true and .tag_name == $tag and .target_commitish == $sha and
+            (.assets | length) == 5 and
+            all(.assets[]; .state == "uploaded" and
+              (.digest | startswith("sha256:"))) and
+            ([.assets[].name] | sort) ==
+              (["SHA256SUMS", "Trophy-0.11.3-amd64.deb",
+                "Trophy-0.11.3-x86_64.AppImage",
+                "Trophy-0.11.3-x86_64.rpm",
+                "Trophy-0.11.3.tar.xz"] | sort)
+          ' <<<"$release" >/dev/null
+          gh api --method PATCH "repos/$repo/releases/$id" \
+            -F draft=false -F prerelease=true --jq '.html_url'
+
 
   comment-pr:
     needs: verify-packages
