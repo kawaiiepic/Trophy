@@ -167,6 +167,8 @@ GNOME may require a logout/login before discovering a new extension or loading a
 
 On Umbriel, Trophy uses the native read-only CLI (`umbriel windows --json`, `umbriel focused-window --json`, `umbriel outputs --json`) to track window identity, focus, fullscreen, process ID, and geometry. No extension needs installing. Ensure `umbriel` is on Trophy's PATH and the launched process can reach the current session's `UMBRIEL_SOCKET` or the normal runtime socket. The wizard reports Working after a valid snapshot, including when no windows are open.
 
+If the helper remains unavailable, first run `umbriel windows --json` from the same session and confirm that the command returns valid JSON. Check that Trophy inherits `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, and the optional `UMBRIEL_SOCKET` environment variable. Use **Repair helper** to restart polling after restoring the connection.
+
 Capture independently requires PipeWire and a compatible xdg-desktop-portal screencast backend. Umbriel support has not yet been verified end-to-end on physical hardware.
 
 ## Keyboard shortcuts
