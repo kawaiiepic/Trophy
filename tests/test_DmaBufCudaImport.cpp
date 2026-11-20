@@ -14,6 +14,7 @@
 #include <gbm.h>
 #include <gtest/gtest.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -32,6 +33,7 @@ extern "C" {
 #include "capture/IVideoCaptureSource.h"
 #include "capture/EglDmaBuf.h"
 #include "encoding/FFmpegEncoder.h"
+#include "encoding/VaapiDrmDescriptor.h"
 #include "muxing/FFmpegMuxer.h"
 
 using namespace TrophyBackend;
@@ -877,4 +879,79 @@ TEST(DmaBufCudaImportTest, ReusedRegistrationReadsFreshPixels) {
   EXPECT_NEAR(last[1], 145, 18);  // green
   EXPECT_NEAR(last[2], 41, 18);   // blue
   EXPECT_NEAR(last[3], 235, 18);  // white
+}
+
+TEST(DmaBufVaapiDescriptorTest, TwoPlanesFromSameAllocationUseOneDrmObject) {
+  const int fd = memfd_create("trophy-vaapi-planes", MFD_CLOEXEC);
+  ASSERT_GE(fd, 0);
+  ASSERT_EQ(ftruncate(fd, 65536), 0);
+  const int second = dup(fd);
+  ASSERT_GE(second, 0);
+  VideoFrame frame{};
+  frame.isDmaBuf = true;
+  frame.width = 64;
+  frame.height = 32;
+  frame.drmFormat = DRM_FORMAT_XRGB8888;
+  frame.drmModifier = 0x0200000000000001ULL;
+  frame.dmaBufFd = fd;
+  frame.dmaBufStride = 256;
+  frame.dmaBufPlanes = {{fd, 256, 0, 0}, {second, 64, 32768, 0}};
+  AVDRMFrameDescriptor descriptor{};
+  EXPECT_EQ(buildVaapiDrmDescriptor(frame, descriptor),
+            VaapiDrmDescriptorStatus::Ok);
+  ASSERT_EQ(descriptor.nb_objects, 1);
+  ASSERT_EQ(descriptor.nb_layers, 1);
+  EXPECT_EQ(descriptor.layers[0].nb_planes, 2);
+  EXPECT_EQ(descriptor.layers[0].planes[0].object_index, 0);
+  EXPECT_EQ(descriptor.layers[0].planes[1].object_index, 0);
+  EXPECT_EQ(descriptor.layers[0].planes[1].offset, 32768u);
+  EXPECT_EQ(descriptor.layers[0].planes[1].pitch, 64u);
+  EXPECT_EQ(descriptor.objects[0].size, 65536u);
+  close(fd);
+  close(second);
+  EXPECT_GE(fcntl(descriptor.objects[0].fd, F_GETFD), 0);
+  close(descriptor.objects[0].fd);
+}
+
+TEST(DmaBufVaapiDescriptorTest, SeparateObjectsAreRejectedWithoutLeakingFds) {
+  const int first = memfd_create("trophy-vaapi-primary", MFD_CLOEXEC);
+  const int second = memfd_create("trophy-vaapi-metadata", MFD_CLOEXEC);
+  ASSERT_GE(first, 0);
+  ASSERT_GE(second, 0);
+  VideoFrame frame{};
+  frame.isDmaBuf = true;
+  frame.width = 64;
+  frame.height = 32;
+  frame.drmFormat = DRM_FORMAT_XRGB8888;
+  frame.dmaBufFd = first;
+  frame.dmaBufStride = 256;
+  frame.dmaBufPlanes = {{first, 256, 0, 0}, {second, 64, 8192, 0}};
+  AVDRMFrameDescriptor descriptor{};
+  EXPECT_EQ(buildVaapiDrmDescriptor(frame, descriptor),
+            VaapiDrmDescriptorStatus::SeparateObjects);
+  EXPECT_EQ(descriptor.nb_objects, 0);
+  EXPECT_GE(fcntl(first, F_GETFD), 0);
+  EXPECT_GE(fcntl(second, F_GETFD), 0);
+  close(first);
+  close(second);
+}
+
+TEST(DmaBufVaapiDescriptorTest, LegacySinglePlaneStillImports) {
+  const int fd = memfd_create("trophy-vaapi-legacy", MFD_CLOEXEC);
+  ASSERT_GE(fd, 0);
+  ASSERT_EQ(ftruncate(fd, 32768), 0);
+  VideoFrame frame{};
+  frame.isDmaBuf = true;
+  frame.width = 64;
+  frame.height = 32;
+  frame.drmFormat = DRM_FORMAT_XRGB8888;
+  frame.dmaBufFd = fd;
+  frame.dmaBufStride = 256;
+  AVDRMFrameDescriptor descriptor{};
+  EXPECT_EQ(buildVaapiDrmDescriptor(frame, descriptor),
+            VaapiDrmDescriptorStatus::Ok);
+  ASSERT_EQ(descriptor.nb_objects, 1);
+  EXPECT_EQ(descriptor.layers[0].nb_planes, 1);
+  close(fd);
+  close(descriptor.objects[0].fd);
 }

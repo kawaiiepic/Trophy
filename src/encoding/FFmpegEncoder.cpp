@@ -10,6 +10,7 @@
 #include "EncoderTuning.h"
 #include "capture/EglDmaBuf.h"
 #include "capture/IVideoCaptureSource.h"
+#include "VaapiDrmDescriptor.h"
 
 #include <QDebug>
 #include <QString>
@@ -322,42 +323,17 @@ AVFrame *vaapiImportScale(VaapiImportState &state, const VideoFrame &input,
     av_free(desc);
     return fail(QStringLiteral("VA-API DMA-BUF ownership failed"));
   }
-  desc->nb_layers = 1;
-  desc->layers[0].format = input.drmFormat;
-  desc->layers[0].nb_planes = static_cast<int>(planeCount);
-  // One owned DMA-BUF object per SPA data block, even if GBM exported
-  // multiple plane descriptors referring to the same kernel allocation.
-  // Duplication and AVBufferRef lifetime keep each plane valid through VPP.
-  for (size_t i = 0; i < planeCount; ++i) {
-    const DmaBufPlane plane = input.dmaBufPlanes.empty()
-        ? DmaBufPlane{input.dmaBufFd, input.dmaBufStride,
-                      static_cast<uint32_t>(input.dmaBufOffset), 0}
-        : input.dmaBufPlanes[i];
-    const int fd = dup(plane.fd);
-    if (fd < 0) {
-      for (int n = 0; n < desc->nb_objects; ++n)
-        close(desc->objects[n].fd);
-      delete lease;
-      av_free(desc);
-      return fail(QStringLiteral("VA-API DMA-BUF plane duplication failed"));
-    }
-    auto &object = desc->objects[desc->nb_objects++];
-    object.fd = fd;
-    // Linux DMA-BUF fds expose their allocation size via SEEK_END. PipeWire
-    // producers can leave spa_data.maxsize at zero for GPU allocations.
-    // Only approximate as a last resort; never infer an auxiliary plane's
-    // size by treating it as a full-height RGB image.
-    const off_t end = lseek(fd, 0, SEEK_END);
-    object.size = end > 0 ? static_cast<size_t>(end)
-        : std::max<size_t>(plane.size,
-            size_t(plane.offset) + size_t(plane.stride) *
-                (i == 0 ? size_t(input.height) : 1));
-    object.format_modifier = input.drmModifier;
-    auto &layout = desc->layers[0].planes[i];
-    layout.object_index = static_cast<int>(i);
-    layout.pitch = plane.stride;
-    layout.offset = plane.offset;
+
+  // FFmpeg's VA-API importer requires one DRM object even when that object
+  // contains several compressed metadata planes. Verify same allocation
+  // identity before describing all planes under object_index=0.
+  const auto buildResult = buildVaapiDrmDescriptor(input, *desc);
+  if (buildResult != VaapiDrmDescriptorStatus::Ok) {
+    delete lease;
+    av_free(desc);
+    return fail(QString::fromLatin1(vaapiDrmDescriptorError(buildResult)));
   }
+
   drm->buf[0] = av_buffer_create(reinterpret_cast<uint8_t *>(desc), sizeof(*desc),
       [](void *opaque, uint8_t *bytes) {
         auto *descriptor = reinterpret_cast<AVDRMFrameDescriptor *>(bytes);
@@ -378,8 +354,15 @@ AVFrame *vaapiImportScale(VaapiImportState &state, const VideoFrame &input,
   drm->width = input.width; drm->height = input.height;
   mapped->format = AV_PIX_FMT_VAAPI;
   mapped->hw_frames_ctx = av_buffer_ref(state.inputFrames);
-  if (!mapped->hw_frames_ctx || av_hwframe_map(mapped, drm, AV_HWFRAME_MAP_READ) < 0)
-    return fail(QStringLiteral("VA-API DMA-BUF RGB import failed"));
+  if (!mapped->hw_frames_ctx)
+    return fail(QStringLiteral("VA-API DMA-BUF RGB import context unavailable"));
+  const int importResult = av_hwframe_map(mapped, drm, AV_HWFRAME_MAP_READ);
+  if (importResult < 0) {
+    char error[AV_ERROR_MAX_STRING_SIZE] = {};
+    av_strerror(importResult, error, sizeof(error));
+    return fail(QStringLiteral("VA-API DMA-BUF RGB import failed: %1")
+                    .arg(QString::fromUtf8(error)));
+  }
   if (av_hwframe_get_buffer(outputFrames, output, 0) < 0)
     return fail(QStringLiteral("VA-API output surface allocation failed"));
   const QRect fit = fitVideoFrame(input.width, input.height, pool->width, pool->height, 2, 2);
