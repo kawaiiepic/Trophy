@@ -103,10 +103,10 @@ def check_payload(payload):
     Kept separate from the process checks so the packaging harness can be
     tested against fake trees.
     """
+    if (payload / "usr/share/trophy/kwin").exists():
+        raise RuntimeError("Obsolete compositor helper bundled: usr/share/trophy/kwin")
     for pattern in (
         "usr/bin/qt.conf", "usr/lib/libTrophy.so",
-        "usr/lib/**/trophy/libtrophy_layer.so",
-        "usr/lib/**/trophy/libtrophy_gl_shim.so",
         "usr/plugins/platforms/libqwayland*.so",
         "usr/plugins/platforms/libqoffscreen.so",
         "usr/plugins/wayland-shell-integration/*.so",
@@ -116,8 +116,6 @@ def check_payload(payload):
         # picker, which only exists in the QML payload.
         "usr/qml/**/FolderDialog.qml",
         "usr/share/applications/io.github.stevenjwheeler.Trophy.desktop",
-        "usr/share/trophy/vulkan_layer/trophy_layer.json",
-        "usr/share/trophy/kwin/trophy-monitor/contents/code/main.js",
         "usr/share/metainfo/*.metainfo.xml",
     ):
         if not any(payload.glob(pattern)):
@@ -200,8 +198,7 @@ def smoke(image, log_path, expect_host_libva=False, expect_bundled_runtime=False
         (config / "settings.json").write_text(json.dumps({
             "version": 1,
             "storage": {"recordingsPath": str(root / "recordings"), "autoDelete": False},
-            "detection": {"autoDetect": False, "autoRecord": False,
-                          "windowTracking": False, "vulkanLayer": False},
+            "detection": {"autoDetect": False, "autoRecord": False},
             "general": {"updateCheck": False, "globalShortcuts": False,
                         "instantReplay": False, "startOnLogin": False},
         }))
@@ -241,19 +238,19 @@ def smoke(image, log_path, expect_host_libva=False, expect_bundled_runtime=False
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
         output = log_path.read_text()
+        app_log = config / "trophy.log"
+        app_output = app_log.read_text(errors="replace") if app_log.exists() else ""
         if expect_bundled_runtime:
             # Support depends on knowing which half of the runtime was used, so
             # a bundle that stops reporting it is a regression too.
             for marker in ("Runtime libraries:", "from the host", "from the bundle"):
-                if marker not in output:
+                if marker not in app_output:
                     raise RuntimeError(
                         f"startup log is missing the runtime library inventory ({marker})")
             # The bundled FFmpeg must keep the software H.264 encoder that the
             # Qt SDK's LGPL copy lacks; without x264 there is no recording
             # fallback when no GPU encoder is usable. The encoder catalogue is
             # DEBUG level, so it lands in trophy.log, not the console.
-            app_log = config / "trophy.log"
-            app_output = app_log.read_text(errors="replace") if app_log.exists() else ""
             if "x264" not in output and "x264" not in app_output:
                 raise RuntimeError(
                     "startup log does not report the software x264 encoder; "

@@ -17,6 +17,7 @@
 #include <QSignalSpy>
 #include <QTest>
 #include <condition_variable>
+#include <future>
 #include <chrono>
 #include <thread>
 #include <mutex>
@@ -228,12 +229,6 @@ protected:
   static bool watchdogActive(const WaylandPortalCapture &capture) {
     return capture.m_startWatchdog.isActive();
   }
-  static bool restoreWatchdogActive(const WaylandPortalCapture &capture) {
-    return capture.m_restoreWatchdog.isActive();
-  }
-  static void restoreTimeout(WaylandPortalCapture &capture) {
-    capture.onRestoreWatchdogTimeout();
-  }
   static void deliverMetadata(WaylandPortalCapture &capture, quint64 request = 0) {
     capture.applySourceMetadata("Old Game", 1234, true, request);
   }
@@ -263,6 +258,63 @@ protected:
   static void node(WaylandPortalCapture &capture, int id) { capture.m_pipewireNodeId = id; }
   static void removeNode(WaylandPortalCapture &capture, uint32_t id) {
     WaylandPortalCapture::on_registry_global_remove(&capture, id);
+  }
+  void nodeClosureRace(int scenario) {
+    WaylandPortalCapture capture;
+    simulateCapturing(capture, 7);
+    enableNative(capture, 7);
+    node(capture, 101);
+    std::promise<void> release;
+    const auto future = release.get_future().share();
+    auto completed = std::make_shared<std::atomic_bool>(false);
+    auto calls = std::make_shared<std::atomic_int>(0);
+    capture.m_nodeDestructionLookup = [future, completed, calls, scenario](
+        uint32_t, uint32_t, uint64_t) {
+      ++*calls;
+      future.wait();
+      completed->store(true);
+      return scenario != 1;
+    };
+    QSignalSpy errors(&capture, &IVideoCaptureSource::captureError);
+    if (scenario != 3) {
+      removeNode(capture, 101);
+      removeNode(capture, 101); // Duplicate callbacks cannot stack probes.
+    }
+    capture.portalSessionLost("sharing closed",
+                             IVideoCaptureSource::CaptureErrorKind::SessionClosed);
+    EXPECT_FALSE(capture.isCapturing()); // Delivery retires before attestation.
+    if (scenario == 3) {
+      EXPECT_EQ(errors.size(), 1);
+      removeNode(capture, 101); // Closed alone cannot authorize a later probe.
+      QCoreApplication::processEvents();
+      EXPECT_EQ(calls->load(), 0);
+      EXPECT_EQ(capture.lastErrorKind(),
+                IVideoCaptureSource::CaptureErrorKind::SessionClosed);
+      return;
+    }
+    EXPECT_EQ(errors.size(), 0);
+    EXPECT_FALSE(capture.startCapture());
+    QCoreApplication::processEvents(); // Dispatch the pre-Closed node removal.
+    if (scenario == 2) {
+      capture.stopCapture();
+      simulateCapturing(capture, 9);
+      enableNative(capture, 9);
+    }
+    release.set_value();
+    ASSERT_TRUE(waitUntil([&] { return completed->load(); }));
+    if (scenario == 2) {
+      QTest::qWait(20);
+      EXPECT_EQ(errors.size(), 0); // Neither Stop nor a new attempt inherits it.
+    } else {
+      ASSERT_TRUE(waitUntil([&] { return errors.size() == 1; }));
+      EXPECT_EQ(capture.lastErrorKind(),
+                scenario == 1 ? IVideoCaptureSource::CaptureErrorKind::SessionClosed
+                              : IVideoCaptureSource::CaptureErrorKind::SourceDestroyed);
+      postNative(capture, 7);
+      QCoreApplication::processEvents();
+      EXPECT_EQ(errors.size(), 1);
+    }
+    EXPECT_EQ(calls->load(), 1);
   }
   static void activatePortalOnly(WaylandPortalCapture &capture) {
     // Exercise real D-Bus session lifecycle without claiming native video
@@ -300,6 +352,40 @@ static const auto *portalTestEnvironment =
 
 using namespace TrophyBackend;
 
+TEST_F(WaylandPortalCaptureTest, ExplicitCancellationIsDistinctFromPortalFailureAtEveryStage) {
+  if (!startFake()) GTEST_SKIP() << "Requires private portal launcher";
+  for (int stage = 0; stage < 3; ++stage) {
+    for (uint response : {1u, 2u}) {
+      SCOPED_TRACE(stage);
+      SCOPED_TRACE(response);
+      WaylandPortalCapture capture;
+      CaptureConfig config;
+      config.useDmaBuf = false;
+      ASSERT_TRUE(capture.initialize(config));
+      QSignalSpy errors(&capture, &IVideoCaptureSource::captureError);
+      ASSERT_TRUE(capture.startCapture());
+      ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty(); }));
+      if (stage > 0) {
+        ASSERT_EQ(control("Respond", {pendingPath(capture), 0u,
+            QVariantMap{{"session_handle", "/test/session"}}}).type(), QDBusMessage::ReplyMessage);
+        ASSERT_TRUE(waitUntil([&] { return captureStageIsSelect(capture); }));
+      }
+      if (stage > 1) {
+        ASSERT_EQ(control("Respond", {pendingPath(capture), 0u, QVariantMap{}}).type(),
+            QDBusMessage::ReplyMessage);
+        ASSERT_TRUE(waitUntil([&] { return captureStageIsStart(capture); }));
+      }
+      ASSERT_EQ(control("Respond", {pendingPath(capture), response, QVariantMap{}}).type(),
+          QDBusMessage::ReplyMessage);
+      ASSERT_TRUE(waitUntil([&] { return errors.size() == 1; }));
+      EXPECT_EQ(capture.lastErrorKind(), response == 1u
+          ? IVideoCaptureSource::CaptureErrorKind::Cancelled
+          : IVideoCaptureSource::CaptureErrorKind::Other);
+      EXPECT_FALSE(starting(capture));
+    }
+  }
+}
+
 TEST_F(WaylandPortalCaptureTest, GrantedNodeRemovalIgnoresOtherNodesAndRetiredGenerations) {
   WaylandPortalCapture capture;
   simulateCapturing(capture, 7);
@@ -331,6 +417,22 @@ TEST_F(WaylandPortalCaptureTest, GrantedNodeRemovalIgnoresOtherNodesAndRetiredGe
   removeNode(capture, 303);
   QCoreApplication::processEvents();
   EXPECT_EQ(errors.size(), 1);
+}
+
+TEST_F(WaylandPortalCaptureTest, PortalClosedCannotErasePendingProvenNodeDestruction) {
+  nodeClosureRace(0);
+}
+
+TEST_F(WaylandPortalCaptureTest, InconclusivePendingNodeCheckKeepsPortalClosureTerminal) {
+  nodeClosureRace(1);
+}
+
+TEST_F(WaylandPortalCaptureTest, StopAndNewAttemptDiscardPendingClosedNodeCheck) {
+  nodeClosureRace(2);
+}
+
+TEST_F(WaylandPortalCaptureTest, PortalClosureAloneNeverStartsDestructionAttestation) {
+  nodeClosureRace(3);
 }
 
 TEST_F(WaylandPortalCaptureTest, NativeCoreAndStreamLossRetireOnceButObjectErrorsDoNot) {
@@ -368,6 +470,7 @@ TEST_F(WaylandPortalCaptureTest, PortalClosedDuringSelectionRejectsLateResponseA
   const QString oldRequest = pendingPath(capture);
   control("CloseSession", {"/test/session"});
   ASSERT_TRUE(waitUntil([&] { return errors.size() == 1; }));
+  EXPECT_EQ(capture.lastErrorKind(), IVideoCaptureSource::CaptureErrorKind::SessionClosed);
   EXPECT_FALSE(starting(capture));
   EXPECT_FALSE(watchdogActive(capture));
   EXPECT_FALSE(capture.isCapturing());
@@ -399,6 +502,7 @@ TEST_F(WaylandPortalCaptureTest, ActivePortalClosureIgnoresWrongPathSenderAndRet
   EXPECT_EQ(errors.size(), 0);
   control("CloseSession", {"/test/session"});
   ASSERT_TRUE(waitUntil([&] { return errors.size() == 1; }));
+  EXPECT_EQ(capture.lastErrorKind(), IVideoCaptureSource::CaptureErrorKind::SessionClosed);
   EXPECT_FALSE(capture.isCapturing());
   EXPECT_FALSE(capture.startCapture());
   control("CloseSession", {"/test/session"});
@@ -700,7 +804,7 @@ TEST_F(WaylandPortalCaptureTest, SelectMethodErrorStopsWatchdogAndAllowsRetry) {
   ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty(); }));
 }
 
-TEST_F(WaylandPortalCaptureTest, SilentRestoreExpectationArmsOnlyWithSavedToken) {
+TEST_F(WaylandPortalCaptureTest, SlowPortalSelectionDoesNotProveRestoreTokenStale) {
   if (!startFake()) GTEST_SKIP() << "requires private dbus-run-session bus";
   {
     // First-ever authorization: no token, so a slow portal picker is the
@@ -711,7 +815,7 @@ TEST_F(WaylandPortalCaptureTest, SilentRestoreExpectationArmsOnlyWithSavedToken)
     const QString create = pendingPath(capture);
     control("Respond", {create, 0u, QVariantMap{{"session_handle", "/test/session"}}});
     ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty() && pendingPath(capture) != create; }));
-    EXPECT_FALSE(restoreWatchdogActive(capture));
+    EXPECT_TRUE(watchdogActive(capture));
     capture.stopCapture();
   }
   {
@@ -723,17 +827,21 @@ TEST_F(WaylandPortalCaptureTest, SilentRestoreExpectationArmsOnlyWithSavedToken)
     const QString create = pendingPath(capture);
     control("Respond", {create, 0u, QVariantMap{{"session_handle", "/test/session"}}});
     ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty() && pendingPath(capture) != create; }));
-    EXPECT_TRUE(restoreWatchdogActive(capture));
-    // A completed restore stops waiting.
+    QTest::qWait(1600);
+    EXPECT_TRUE(starting(capture));
+    EXPECT_TRUE(watchdogActive(capture));
+    EXPECT_EQ(stale.count(), 0); // A slow reply is not proof of a visible picker.
+    const auto select = pendingPath(capture);
     control("Respond", {pendingPath(capture), 0u,
                         QVariantMap{{"restore_token", "fresh-token"}}});
-    ASSERT_TRUE(waitUntil([&] { return !restoreWatchdogActive(capture); }));
+    ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty() &&
+                                     pendingPath(capture) != select; }));
     EXPECT_EQ(stale.count(), 0);
     capture.stopCapture();
   }
 }
 
-TEST_F(WaylandPortalCaptureTest, UnhonouredRestoreTokenAbandonsThePickerForReauthorization) {
+TEST_F(WaylandPortalCaptureTest, UnansweredSavedRestoreTimesOutWithoutReauthorization) {
   if (!startFake()) GTEST_SKIP() << "requires private dbus-run-session bus";
   WaylandPortalCapture capture;
   restore(capture);
@@ -744,16 +852,14 @@ TEST_F(WaylandPortalCaptureTest, UnhonouredRestoreTokenAbandonsThePickerForReaut
   const QString create = pendingPath(capture);
   control("Respond", {create, 0u, QVariantMap{{"session_handle", "/test/session"}}});
   ASSERT_TRUE(waitUntil([&] { return !pendingPath(capture).isEmpty() && pendingPath(capture) != create; }));
-  // The portal never answers the selection (its picker is up) ...
-  ASSERT_TRUE(restoreWatchdogActive(capture));
-  restoreTimeout(capture);
-  // ... so the attempt is abandoned and the app is asked to re-authorize.
-  ASSERT_TRUE(waitUntil([&] { return stale.count() == 1; }));
-  EXPECT_EQ(stale.first()[0].toString(), "saved-token");
-  EXPECT_EQ(errors.count(), 0);
+  // The portal never answers: terminate at the normal startup deadline, but
+  // do not infer a revoked token (or a visible picker) solely from elapsed time.
+  ASSERT_TRUE(watchdogActive(capture));
+  timeout(capture);
+  ASSERT_TRUE(waitUntil([&] { return errors.count() == 1; }));
+  EXPECT_EQ(stale.count(), 0);
   EXPECT_FALSE(starting(capture));
   EXPECT_FALSE(watchdogActive(capture));
-  EXPECT_FALSE(restoreWatchdogActive(capture));
   EXPECT_TRUE(pendingPath(capture).isEmpty());
   EXPECT_EQ(control("SessionCloseCount", {}).arguments().value(0).toInt(), 1);
 }

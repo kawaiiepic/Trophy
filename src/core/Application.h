@@ -21,6 +21,7 @@ class ApplicationStartupVisibilityTest;
 class UpdateChecker;
 class UpdateInstaller;
 class RecordingManager;
+class RecordingEngine;
 class SettingsManager;
 class StorageManager;
 class RecordingLibrary;
@@ -33,10 +34,9 @@ class DeletionQueue;
 class GameDetectionService;
 class NotificationService;
 class AudioMixer;
-class WindowService;
-class WaylandWindowMonitor;
 class HardwareInfo;
 class AudioDeviceEnumerator;
+class AudioApplicationRegistry;
 class SystemTrayManager;
 class AutostartManager;
 class ReplayManager;
@@ -73,14 +73,6 @@ class Application : public QApplication {
   Q_PROPERTY(bool runWithoutTraySupported READ isRunWithoutTraySupported CONSTANT)
   Q_PROPERTY(bool useNativeDialogs READ useNativeDialogs NOTIFY useNativeDialogsChanged)
   Q_PROPERTY(bool suppressNextStorageNotification READ suppressNextStorageNotification WRITE setSuppressNextStorageNotification NOTIFY suppressNextStorageNotificationChanged)
-  Q_PROPERTY(bool vulkanLayerRegistered READ vulkanLayerRegistered NOTIFY detectionStatusChanged)
-  Q_PROPERTY(bool glShimAvailable READ glShimAvailable NOTIFY detectionStatusChanged)
-  Q_PROPERTY(bool glShimEnrolled READ glShimEnrolled NOTIFY detectionStatusChanged)
-  Q_PROPERTY(bool glShimActive READ glShimActive NOTIFY detectionStatusChanged)
-  Q_PROPERTY(int glHelperVersion READ glHelperVersion NOTIFY detectionStatusChanged)
-  Q_PROPERTY(int glBundledHelperVersion READ glBundledHelperVersion NOTIFY detectionStatusChanged)
-  Q_PROPERTY(int vulkanBundledHelperVersion READ vulkanBundledHelperVersion NOTIFY detectionStatusChanged)
-  Q_PROPERTY(int vulkanHelperVersion READ vulkanHelperVersion NOTIFY detectionStatusChanged)
 
 public:
   explicit Application(int &argc, char **argv);
@@ -120,17 +112,6 @@ public:
   // Encoder detection (called from QML)
   Q_INVOKABLE bool isEncoderAvailable(const QString &name) const;
 
-  // Detection-component status for the setup wizard (live properties).
-  bool vulkanLayerRegistered() const { return m_vulkanLayerRegistered; }
-  Q_INVOKABLE bool setVulkanLayerEnabled(bool enabled);
-  bool glShimAvailable() const;
-  bool glShimEnrolled() const;
-  bool glShimActive() const;
-  int glHelperVersion() const;
-  int glBundledHelperVersion() const;
-  int vulkanBundledHelperVersion() const;
-  int vulkanHelperVersion() const;
-  Q_INVOKABLE bool setGlShimEnrolled(bool enrolled);
 
   bool suppressNextStorageNotification() const;
   void setSuppressNextStorageNotification(bool suppress);
@@ -172,6 +153,7 @@ public:
   Q_INVOKABLE void playRecordingStoppedPing(bool preview);
   // Global-shortcut record toggle (mirrors F9, with feedback).
   Q_INVOKABLE void requestToggleRecording();
+  Q_INVOKABLE void cancelPendingCapture();
   // Opens a pre-filled GitHub bug report in the browser. Browsers cannot
   // accept a file attachment via URL, so the issue body embeds the app
   // version plus the tail of trophy.log (see BugReport.h) instead.
@@ -193,7 +175,6 @@ signals:
   void suppressNextStorageNotificationChanged();
   void trayAvailabilityChanged();
   void useNativeDialogsChanged();
-  void detectionStatusChanged();
   void fatalError(const QString &message);
   void updateDialogRequested();
 
@@ -207,28 +188,26 @@ private:
   void registerQmlTypes();
   void exposeServicesToQml();
   void connectSignals();
+  void onCaptureRecoveryChanged();
+  void onInstantReplayEnabledChanged();
+  void onGameDetected(QString gameName);
   void updateDiscordPresence();
   // Only successful, finalized outputs are warmed (never active recordings or
   // DVR segments). Reuses the player's cache instances and in-flight jobs.
   void preparePlayerCaches(const QString &filePath);
   friend class ApplicationMediaCacheTest;
-  // Registers the Vulkan implicit layer; true when the layer JSON is in
-  // place (result cached in m_vulkanLayerRegistered at startup).
-  bool ensureVulkanLayerRegistered(bool allow32BitMigration = false);
-  // Deletes our layer JSON; true when nothing remains registered.
-  bool removeVulkanLayerRegistration();
 
   std::unique_ptr<RecordingManager> m_recordingManager;
+  std::shared_ptr<RecordingEngine> m_recordingEngine;
   std::unique_ptr<SettingsManager> m_settingsManager;
   std::unique_ptr<StorageManager> m_storageManager;
   std::unique_ptr<RecordingLibrary> m_recordingLibrary;
   std::unique_ptr<ActivityFeed> m_activityFeed;
+  std::unique_ptr<AudioApplicationRegistry> m_audioApplicationRegistry;
   std::unique_ptr<GameDetectionService> m_gameDetector;
   std::unique_ptr<NotificationService> m_notificationService;
   std::unique_ptr<HardwareInfo> m_hardwareInfo;
   std::unique_ptr<AudioMixer> m_audioMixer;
-  std::unique_ptr<WindowService> m_windowService;
-  std::unique_ptr<WaylandWindowMonitor> m_windowMonitor;
   std::unique_ptr<AudioDeviceEnumerator> m_audioDeviceEnumerator;
   std::unique_ptr<SystemTrayManager> m_trayManager;
   std::unique_ptr<AutostartManager> m_autostartManager;
@@ -249,14 +228,8 @@ private:
   QString m_mainQmlPath; // Path for live-reload
   QString m_pendingAutoRecordGame;
   QString m_pendingDvrGame;
-  // A lost capture asked for a fresh recording; instant replay must not take
-  // the portal slot before that retry starts.
-  bool m_recordingRearmPending = false;
-  // The deferred "New Game" prompt for this identity is waiting for its
-  // window; used only to log the stall once instead of every re-check.
-  QString m_authorizePromptWaitingFor;
   // The pending prompt exists because a saved restore token could not be
-  // honoured (the portal wanted its picker anyway), not because the game is
+  // honoured (the portal explicitly rejected it), not because the game is
   // new: word the notification accordingly.
   bool m_authorizePromptTokenInvalid = false;
   bool m_captureSelectionForRecording = true;
@@ -268,20 +241,20 @@ private:
   QTimer *m_windowWaitTimer = nullptr;
   QString m_pendingWindowGame;
   QString m_pendingCaptureKey;
+  QString m_pendingWindowInstance;
   bool m_pendingWindowIsRecord = false;
   static constexpr int kWindowWaitMs = 30000;
   void startWhenWindowReady(const QString &game, bool isRecord);
   void resumePendingCapture();
+  void clearPendingCaptureForGame(const QString &game);
   // A launcher/boot window was captured and disappeared before anything was
   // recorded: wait for the window that replaces it and try again.
-  void onCaptureStartLost(const QString &game, const QString &identity);
-  // Audio-settled capture: auto-armed recording/DVR waits for the
-  // game's PipeWire node to exist (stable across two polls) before
-  // starting, so launch sessions don't open on monitor fallback and
-  // swap mid-track. Bounded (~20s): the timeout starts anyway with
-  // today's fallback behavior. Manual starts never wait.
+  void resumeReplayAfterRecording();
+  // Automatic full recording and DVR wait for owned audio after payload
+  // readiness. Silent games retain the bounded desktop-audio fallback.
   QTimer *m_audioWaitTimer = nullptr;
   QString m_pendingAudioGame;
+  QString m_pendingAudioInstance;
   bool m_pendingAudioIsRecord = false;
   int m_audioWaitHits = 0;
   int m_audioWaitTicks = 0;
@@ -301,7 +274,12 @@ private:
                                 bool present,
                                 const std::function<void(bool)> &onResult);
   void startWhenAudioSettled(const QString &game, bool isRecord);
+  void onAudioWaitTimeout();
+  bool pendingAudioIdentityIsCurrent() const;
+  bool stopPendingCaptureForSelection();
+  std::function<void(const QString &)> m_startFullRecording;
   static bool gameAudioNodePresent(const QString &game, qint64 pid);
+  std::function<bool(const QString &, qint64)> m_gameAudioLookup = gameAudioNodePresent;
   // One async presence probe (worker thread); onResult runs on the GUI
   // thread unless superseded by a generation bump (game-close / re-arm).
   void probeGameAudioAsync(const QString &game, qint64 pid,
@@ -330,7 +308,6 @@ private:
   void onAuthorizeDebounceFired();
   friend class ApplicationAuthorizePromptTest;
   bool m_suppressNextStorageNotification = false;
-  bool m_vulkanLayerRegistered = false;
   bool m_minimizeNotifyShown = false;
   bool m_forceMinimized = false;
   QString m_postUpdateFromVersion;

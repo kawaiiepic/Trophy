@@ -17,23 +17,45 @@ Rectangle {
     id: root
     // Explicit dependency; this default preserves engine/creation-context hosts.
     property var preferences: typeof settingsManager !== "undefined" ? settingsManager : null // qmllint disable unqualified
+    property var libraryDetector: typeof gameDetector !== "undefined" ? gameDetector : null // qmllint disable unqualified
+    readonly property bool librariesScanning: libraryDetector ? libraryDetector.librariesScanning : false
+    readonly property bool initialLibraryScan: librariesScanning
+        && libraryDetector && !libraryDetector.gameLibrariesReady
+    property var detectedLaunchers: []
+    property int libraryGameCount: 0
+    function updateLibrarySummary() {
+        // The same installation may be listed by more than one launcher.
+        var installations = new Set()
+        var launchers = []
+        for (var library of (libraryDetector ? libraryDetector.gameLibraries : [])) {
+            if (!library.detected)
+                continue
+            launchers.push({id: library.id, name: library.name})
+            for (var game of (library.games || []))
+                installations.add(JSON.stringify([game.name, game.directory]))
+        }
+        if (libraryGameCount !== installations.size)
+            libraryGameCount = installations.size
+        // Preserve icon objects/hover state when only scan status or unrelated
+        // location metadata changes. Replace presentation only when it differs.
+        if (JSON.stringify(detectedLaunchers) !== JSON.stringify(launchers))
+            detectedLaunchers = launchers
+    }
+    onLibraryDetectorChanged: updateLibrarySummary()
+    Component.onCompleted: updateLibrarySummary()
+    Connections {
+        target: root.libraryDetector
+        function onGameLibrariesChanged() { root.updateLibrarySummary() }
+    }
 
     anchors.fill: parent
     color: Theme.withOpacity(Theme.backgroundColor, 0.95)
     z: 1000 
 
     property int currentStep: 0
-    property int totalSteps: 7 // Welcome, Storage, Audio, Modules, Hardware, Shortcuts, Finish
-    readonly property bool windowHelperReady: windowMonitor && windowMonitor.trackingReady
-    // On GNOME the helper is installed but needs a logout/login to be discovered
-    // and enabled (via the autostart entry). Allow proceeding once installed.
-    readonly property bool windowHelperCanProceed: windowMonitor && (windowMonitor.trackingReady
-        || (windowMonitor.compositorName === "gnome" && windowMonitor.gnomeHelperInstalled))
-    property bool helperSetupRequested: false
+    readonly property int totalSteps: 7 // Welcome, Storage, Audio, Libraries, Hardware, Shortcuts, Finish
 
-    // Reset to first page whenever the wizard is (re-)shown
-    // Registration needs a restart, so remember the step and resume there
-    // instead of making the user walk through the wizard again.
+    // Resume unfinished setup; completing the wizard resets the saved step.
     onCurrentStepChanged: if (settingsManager) settingsManager.wizardStep = currentStep
 
     onVisibleChanged: {
@@ -44,8 +66,6 @@ Rectangle {
             wizardCard.opacity = 0
             wizardCard.scale = 0.96
             wizardCardAnimation.start()
-            // Its voice picker has no Refresh button — populate on open.
-            if (audioDeviceEnumerator) audioDeviceEnumerator.refreshAudioApps()
         }
     }
 
@@ -162,6 +182,7 @@ Rectangle {
 
                 StackLayout {
                     id: stepStack
+                    objectName: "setupWizardSteps"
                     anchors.fill: parent
                     anchors.margins: Theme.spacingMedium
                     currentIndex: root.currentStep
@@ -343,6 +364,7 @@ Rectangle {
                                         Label { text: qsTr("Voice Chat Application"); font.weight: Font.Bold; color: Theme.textColor }
                                         VoiceAppComboBox {
                                             id: voiceAppBox; Layout.fillWidth: true
+                                            objectName: "wizardVoiceAppPicker"
                                             apps: audioDeviceEnumerator ? audioDeviceEnumerator.audioApps : []
                                             savedApp: settingsManager ? settingsManager.voiceChatApp : ""
                                             onAppSelected: function(binary) {
@@ -356,140 +378,92 @@ Rectangle {
                         }
                     }
 
-                    /// Step 4: Required tracking and optional reporters
+                    // Step 4: Local game libraries (uses the existing background scan).
                     ScrollView {
-                        id: step4Scroll
+                        id: librariesScroll
                         ScrollBar.vertical: TrophyScrollBar {}
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                         clip: true
                         ColumnLayout {
-                            width: step4Scroll.availableWidth
-                            height: Math.max(implicitHeight, step4Scroll.availableHeight)
+                            width: librariesScroll.availableWidth
+                            height: Math.max(implicitHeight, librariesScroll.availableHeight)
                             spacing: Theme.spacingMedium
                             Item { Layout.fillHeight: true }
-                            ColumnLayout {
+                            Label {
+                                text: qsTr("Game Libraries")
                                 Layout.alignment: Qt.AlignHCenter
-                                spacing: 2
-                                Label { text: qsTr("Game Detection Setup"); Layout.alignment: Qt.AlignHCenter; font.pixelSize: Theme.fontSizeLarge; font.weight: Font.Bold; color: Theme.textColor }
-                                Label { text: qsTr("The Game Window Helper is required. Graphics detection helpers are optional."); Layout.alignment: Qt.AlignHCenter; font.pixelSize: Theme.fontSizeSmall; color: Theme.textSecondaryColor }
+                                font.pixelSize: Theme.fontSizeLarge
+                                font.weight: Font.Bold
+                                color: Theme.textColor
                             }
-                            // Module 1: window tracking (KWin script on KDE)
-                            Rectangle {
+                            Label {
+                                objectName: "wizardLibraryGameCount"
                                 Layout.alignment: Qt.AlignHCenter
-                                Layout.preferredWidth: 500
-                                implicitHeight: modTrackCol.height + (Theme.spacingMedium * 2)
-                                color: Theme.withOpacity(Theme.textColor, 0.05)
-                                radius: Theme.radiusMedium
-                                border.width: 1
-                                border.color: root.windowHelperCanProceed ? Theme.successColor : Theme.errorColor
-                                Behavior on border.color { ColorAnimation { duration: Theme.animationNormal } }
-                                ColumnLayout {
-                                    id: modTrackCol
-                                    anchors.left: parent.left; anchors.right: parent.right; anchors.margins: Theme.spacingMedium; anchors.verticalCenter: parent.verticalCenter
-                                    spacing: Theme.spacingSmall
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: Theme.spacingMedium
-                                        Label { text: qsTr("1. Game Window Helper — %1").arg(windowMonitor ? windowMonitor.compositorName : qsTr("unknown compositor")); font.weight: Font.Bold; color: Theme.textColor; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        Label { text: windowMonitor && windowMonitor.trackingReady ? qsTr("Working") : (windowMonitor && windowMonitor.trackingChecking ? qsTr("Checking…") : (windowMonitor && windowMonitor.compositorName === "gnome" && windowMonitor.gnomeHelperInstalled ? qsTr("Awaiting login") : qsTr("Needs attention"))); color: Theme.textColor; font.pixelSize: Theme.fontSizeSmall }
-                                    }
-                                    Label {
-                                        text: qsTr("Provides window identity, focus and fullscreen state for game detection, the window picker and capture restoration.%1 Screen capture still requires separate authorization.")
-                                              .arg(windowMonitor && windowMonitor.compositorName === "kwin"
-                                                   ? qsTr(" On KDE this uses a read-only KWin script.")
-                                                   : (windowMonitor && windowMonitor.compositorName === "gnome"
-                                                      ? qsTr(" On GNOME this installs a read-only Shell extension. Logout/login may be required; unsafe mode is not needed.") : ""))
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.textSecondaryColor
-                                        wrapMode: Text.WordWrap
-                                        Layout.fillWidth: true
-                                    }
-                                    Label {
-                                        visible: windowMonitor && !windowMonitor.trackingReady && (!windowMonitor.trackingChecking || windowMonitor.compositorName === "gnome")
-                                        text: windowMonitor && windowMonitor.compositorName === "gnome"
-                                              ? windowMonitor.gnomeHelperStatus
-                                              : qsTr("The helper is not responding. Repair will retry setup for %1. If it still fails, check your compositor's integration and permissions.").arg(windowMonitor ? windowMonitor.compositorName : qsTr("this system"))
-                                        font.pixelSize: Theme.fontSizeSmall; color: Theme.textSecondaryColor; wrapMode: Text.WordWrap; Layout.fillWidth: true
-                                    }
-                                    TrophyButton {
-                                        visible: windowMonitor && !windowMonitor.trackingReady
-                                        text: root.helperSetupRequested && windowMonitor && windowMonitor.trackingChecking
-                                              ? qsTr("Setting up…")
-                                              : (windowMonitor && ((windowMonitor.compositorName === "kwin" && !windowMonitor.kwinScriptInstalled)
-                                                                   || (windowMonitor.compositorName === "gnome" && !windowMonitor.gnomeHelperInstalled))
-                                                 ? qsTr("Install helper") : qsTr("Repair helper"))
-                                        enabled: windowMonitor && (!root.helperSetupRequested || !windowMonitor.trackingChecking)
-                                        onClicked: {
-                                            if (windowMonitor) {
-                                                root.helperSetupRequested = true
-                                                windowMonitor.repairTracking()
-                                            }
-                                        }
+                                text: root.initialLibraryScan ? "…" : root.libraryGameCount.toLocaleString()
+                                font.pixelSize: 80
+                                font.weight: Font.ExtraBold
+                                color: Theme.accentColor
+                                Accessible.name: root.initialLibraryScan ? qsTr("Scanning game libraries")
+                                    : qsTr("%n games found", "", root.libraryGameCount)
+                            }
+                            Label {
+                                objectName: "wizardLibrarySummary"
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignHCenter
+                                text: root.initialLibraryScan ? qsTr("Scanning local game libraries…")
+                                    : root.libraryGameCount > 0 ? qsTr("Games found in your launcher libraries")
+                                    : qsTr("No supported launcher games found. You can still add games manually.")
+                                wrapMode: Text.WordWrap
+                                color: Theme.textSecondaryColor
+                            }
+                            RowLayout {
+                                objectName: "wizardDetectedLaunchers"
+                                Layout.alignment: Qt.AlignHCenter
+                                visible: root.detectedLaunchers.length > 0
+                                spacing: Theme.spacingLarge
+                                Repeater {
+                                    model: root.detectedLaunchers
+                                    delegate: Image {
+                                        required property var modelData
+                                        objectName: "wizardLauncherIcon_" + modelData.id
+                                        Layout.preferredWidth: 40
+                                        Layout.preferredHeight: 40
+                                        sourceSize: Qt.size(80, 80)
+                                        fillMode: Image.PreserveAspectFit
+                                        source: modelData.id === "steam" ? "qrc:/icons/default-apps/steam.svg"
+                                            : "qrc:/icons/launchers/" + modelData.id
+                                                + (modelData.id === "legendary" ? ".ico" : ".svg")
+                                        Accessible.role: Accessible.Graphic
+                                        Accessible.name: modelData.name
+                                        HoverHandler { id: launcherHover }
+                                        ToolTip.visible: launcherHover.hovered
+                                        ToolTip.text: modelData.name
                                     }
                                 }
                             }
-                            // Module 2: Vulkan detection layer
-                            Rectangle {
-                                Layout.alignment: Qt.AlignHCenter
-                                Layout.preferredWidth: 500
-                                implicitHeight: modVulkanCol.height + (Theme.spacingMedium * 2)
-                                color: Theme.withOpacity(Theme.textColor, 0.05)
-                                radius: Theme.radiusMedium
-                                border.color: Theme.borderColor
-                                ColumnLayout {
-                                    id: modVulkanCol
-                                    anchors.left: parent.left; anchors.right: parent.right; anchors.margins: Theme.spacingMedium; anchors.verticalCenter: parent.verticalCenter
-                                    spacing: Theme.spacingSmall
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: Theme.spacingMedium
-                                        Label { text: qsTr("2. Vulkan Detection"); font.weight: Font.Bold; color: Theme.textColor; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        Label { text: app && app.vulkanLayerRegistered ? qsTr("Enrolled") : qsTr("Not enrolled"); color: Theme.textColor; font.pixelSize: Theme.fontSizeSmall }
-                                        TrophySwitch { checked: settingsManager ? settingsManager.vulkanLayerEnabled : false; onToggled: if (settingsManager && app) { settingsManager.vulkanLayerEnabled = checked; app.setVulkanLayerEnabled(checked) } }
-                                    }
-                                    Label { text: qsTr("Notices games starting Vulkan graphics and notifies Trophy to start recording, including Proton titles."); font.pixelSize: Theme.fontSizeSmall; color: Theme.textSecondaryColor; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                                }
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: Theme.spacingLarge
+                                Layout.rightMargin: Theme.spacingLarge
+                                text: qsTr("Trophy reads local launcher metadata to recognize and name games when they run. Libraries update automatically; finding a game here does not authorize recording.")
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                                color: Theme.textSecondaryColor
                             }
-                            // Module 3: OpenGL detection shim (opt-in)
-                            Rectangle {
-                                Layout.alignment: Qt.AlignHCenter
-                                Layout.preferredWidth: 500
-                                implicitHeight: modGlCol.height + (Theme.spacingMedium * 2)
-                                color: Theme.withOpacity(Theme.textColor, 0.05)
-                                radius: Theme.radiusMedium
-                                border.color: Theme.borderColor
-                                ColumnLayout {
-                                    id: modGlCol
-                                    anchors.left: parent.left; anchors.right: parent.right; anchors.margins: Theme.spacingMedium; anchors.verticalCenter: parent.verticalCenter
-                                    spacing: Theme.spacingSmall
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: Theme.spacingMedium
-                                        enabled: app && app.glShimAvailable
-                                        Label { text: qsTr("3. OpenGL Detection"); font.weight: Font.Bold; color: Theme.textColor; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        Label { text: (app && app.glShimEnrolled) ? qsTr("Enrolled") : qsTr("Not enrolled"); color: Theme.textColor; font.pixelSize: Theme.fontSizeSmall }
-                                        TrophySwitch { checked: app ? app.glShimEnrolled : false; onToggled: if (app) app.setGlShimEnrolled(checked) }
-                                    }
-                                    Label {
-                                        textFormat: Text.StyledText
-                                        text: qsTr("Notices games starting OpenGL graphics and notifies Trophy to start recording. Loads into any OpenGL app and %1. Changes require logging out and back in.")
-                                              .arg(app && app.glShimEnrolled
-                                                   ? '<font color="' + Theme.cautionColor + '">' + qsTr("may cause issues with anti-cheat games") + '</font>'
-                                                   : qsTr("may cause issues with anti-cheat games"))
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.textSecondaryColor
-                                        wrapMode: Text.WordWrap
-                                        Layout.fillWidth: true
-                                        opacity: (app && app.glShimAvailable) ? 1.0 : 0.5
-                                    }
-                                    Label { visible: app && !app.glShimAvailable; text: qsTr("OpenGL detection helper not found in this install."); font.pixelSize: Theme.fontSizeSmall; color: Theme.textSecondaryColor }
-                                }
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: Theme.spacingLarge
+                                Layout.rightMargin: Theme.spacingLarge
+                                text: qsTr("Missing a game or playing outside a supported launcher? Start it, then use Add Game in the Games tab.\n\nYou can adjust launcher locations later in Settings → Game Detection & Libraries.")
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                                color: Theme.textSecondaryColor
                             }
                             Item { Layout.fillHeight: true }
                         }
                     }
 
-                    /// Step 5: Hardware & Performance
+                    // Step 5: Hardware & Performance
                     ScrollView {
                         id: stepHwScroll
                         ScrollBar.vertical: TrophyScrollBar {}
@@ -717,7 +691,7 @@ Rectangle {
                         }
                     }
 
-                    /// Step 6: Keyboard Shortcuts
+                    // Step 6: Keyboard Shortcuts
                     ScrollView {
                         id: stepKeysScroll
                         ScrollBar.vertical: TrophyScrollBar {}
@@ -841,7 +815,7 @@ Rectangle {
                         }
                     }
 
-                    /// Step 7: Finish
+                    // Step 7: Finish
                     ScrollView {
                         id: step5Scroll
                         ScrollBar.vertical: TrophyScrollBar {}
@@ -885,40 +859,6 @@ Rectangle {
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: Theme.spacingMedium // Gap between toggle boxes and tip box
 
-                                    // GNOME: remind about logout/login for the helper
-                                    Rectangle {
-                                        visible: windowMonitor && windowMonitor.compositorName === "gnome" && !windowMonitor.trackingReady
-                                        Layout.fillWidth: true
-                                        implicitHeight: gnomeReminderCol.height + (Theme.spacingSmall * 2)
-                                        color: Theme.withOpacity(Theme.highlightedColor, 0.1)
-                                        radius: Theme.radiusSmall
-                                        border.width: 1
-                                        border.color: Theme.highlightedColor
-
-                                        ColumnLayout {
-                                            id: gnomeReminderCol
-                                            anchors.left: parent.left
-                                            anchors.right: parent.right
-                                            anchors.margins: Theme.spacingSmall
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            spacing: 2
-
-                                            Label {
-                                                text: qsTr("One more step for game detection")
-                                                font.weight: Font.Bold
-                                                color: Theme.textColor
-                                                Layout.fillWidth: true
-                                                wrapMode: Text.WordWrap
-                                            }
-                                            Label {
-                                                text: qsTr("The Trophy Window Helper was installed. Log out and back in to finish setting it up — it will be enabled automatically on your next login. Until then, game detection uses window titles only.")
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                color: Theme.textSecondaryColor
-                                                wrapMode: Text.WordWrap
-                                                Layout.fillWidth: true
-                                            }
-                                        }
-                                    }
 
                                     // Box 1: Enable Auto-Record
                                     RowLayout {
@@ -933,7 +873,7 @@ Rectangle {
                                             Layout.fillWidth: true
                                             Label { text: qsTr("Enable Auto-Record"); font.weight: Font.Bold; color: Theme.textColor }
                                             Label { 
-                                                text: qsTr("Start recording when a game is detected."); 
+                                                text: qsTr("Automatically record authorized games when detected.");
                                                 font.pixelSize: Theme.fontSizeSmall; 
                                                 color: Theme.textSecondaryColor; 
                                                 wrapMode: Text.WordWrap; 
@@ -982,16 +922,13 @@ Rectangle {
                 Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.borderColor }
                 RowLayout {
                     anchors.fill: parent; anchors.leftMargin: Theme.spacingXLarge; anchors.rightMargin: Theme.spacingXLarge; spacing: Theme.spacingMedium
-                    TrophyButton { text: qsTr("Back"); visible: root.currentStep > 0; onClicked: root.currentStep-- }
+                    TrophyButton { objectName: "wizardBackButton"; text: qsTr("Back"); visible: root.currentStep > 0; onClicked: root.currentStep-- }
                     Item { Layout.fillWidth: true }
                     TrophyButton {
-                        // Registration happens before the app starts, so
-                        // finishing needs no restart: this just closes the
-                        // wizard.
+                        objectName: "wizardNextButton"
+                        // Finishing closes setup without restarting Trophy.
                         text: root.currentStep === root.totalSteps - 1 ? qsTr("Get Started") : qsTr("Next")
                         highlighted: true
-                        visible: root.currentStep !== 3 || root.windowHelperCanProceed
-                        enabled: (root.currentStep !== 3 && root.currentStep !== root.totalSteps - 1) || root.windowHelperCanProceed
                         onClicked: {
                             if (root.currentStep < root.totalSteps - 1) {
                                 root.currentStep++

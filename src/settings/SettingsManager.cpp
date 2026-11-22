@@ -117,8 +117,6 @@ void SettingsManager::load() {
   QJsonObject detection = root["detection"].toObject();
   m_autoDetectGames = detection["autoDetect"].toBool(true);
   m_autoRecordEnabled = detection["autoRecord"].toBool(false);
-  m_windowTrackingEnabled = detection["windowTracking"].toBool(false);
-  m_vulkanLayerEnabled = detection["vulkanLayer"].toBool(false);
   m_setupCompleted = detection["setupCompleted"].toBool(false);
 
   // Load general settings
@@ -128,7 +126,15 @@ void SettingsManager::load() {
   m_startOnLogin = general["startOnLogin"].toBool(false);
   m_instantReplayEnabled = general["instantReplay"].toBool(true);
   m_globalShortcutsEnabled = general["globalShortcuts"].toBool(true);
-  m_wizardStep = qBound(0, general["wizardStep"].toInt(0), 6);
+  int wizardStep = general["wizardStep"].toInt(0);
+  // Layout 2 removes the old informational detection page (index 3).
+  // Resume on Hardware for that page, and retain later pages' meaning.
+  if (general["wizardStepVersion"].toInt(1) < 2 && wizardStep >= 4)
+    --wizardStep;
+  // Layout 3 inserts the library summary before Hardware (index 3).
+  if (general["wizardStepVersion"].toInt(1) < 3 && wizardStep >= 3)
+    ++wizardStep;
+  m_wizardStep = qBound(0, wizardStep, 6);
   m_updateCheckEnabled = general["updateCheck"].toBool(true);
   m_replayCachePath = general["replayCachePath"].toString();
   // Absent keys keep the built-in defaults, so an older settings file still
@@ -203,8 +209,6 @@ void SettingsManager::load() {
   emit autoDeleteOldestChanged();
   emit autoDetectGamesChanged();
   emit autoRecordEnabledChanged();
-  emit windowTrackingEnabledChanged();
-  emit vulkanLayerEnabledChanged();
   emit setupCompletedChanged();
   emit minimizeToTrayChanged();
   emit startMinimizedChanged();
@@ -277,8 +281,6 @@ void SettingsManager::save() {
   QJsonObject detection;
   detection["autoDetect"] = m_autoDetectGames;
   detection["autoRecord"] = m_autoRecordEnabled;
-  detection["windowTracking"] = m_windowTrackingEnabled;
-  detection["vulkanLayer"] = m_vulkanLayerEnabled;
   detection["setupCompleted"] = m_setupCompleted;
   root["detection"] = detection;
 
@@ -290,6 +292,7 @@ void SettingsManager::save() {
   general["instantReplay"] = m_instantReplayEnabled;
   general["globalShortcuts"] = m_globalShortcutsEnabled;
   general["wizardStep"] = m_wizardStep;
+  general["wizardStepVersion"] = 3;
   general["updateCheck"] = m_updateCheckEnabled;
   general["replayCachePath"] = m_replayCachePath;
   general["libraryListView"] = m_libraryListView;
@@ -367,8 +370,6 @@ void SettingsManager::resetToDefaults() {
 
   emit autoDetectGamesChanged();
   emit autoRecordEnabledChanged();
-  emit windowTrackingEnabledChanged();
-  emit vulkanLayerEnabledChanged();
   emit setupCompletedChanged();
   emit minimizeToTrayChanged();
   emit startMinimizedChanged();
@@ -420,8 +421,6 @@ void SettingsManager::loadDefaults() {
   // Detection
   m_autoDetectGames = true;
   m_autoRecordEnabled = false;
-  m_windowTrackingEnabled = false;
-  m_vulkanLayerEnabled = false;
 
   // System tray
   m_minimizeToTray = true;
@@ -627,22 +626,6 @@ void SettingsManager::setAutoRecordEnabled(bool enabled) {
     m_autoRecordEnabled = enabled;
     save();
     emit autoRecordEnabledChanged();
-  }
-}
-
-void SettingsManager::setWindowTrackingEnabled(bool enabled) {
-  if (m_windowTrackingEnabled != enabled) {
-    m_windowTrackingEnabled = enabled;
-    save();
-    emit windowTrackingEnabledChanged();
-  }
-}
-
-void SettingsManager::setVulkanLayerEnabled(bool enabled) {
-  if (m_vulkanLayerEnabled != enabled) {
-    m_vulkanLayerEnabled = enabled;
-    save();
-    emit vulkanLayerEnabledChanged();
   }
 }
 

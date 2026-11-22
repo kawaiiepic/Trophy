@@ -23,18 +23,18 @@ Trophy is a game recorder and clipping app built for Linux on Wayland. Keep a fu
 - **Make a clip, not a project.** Use the built-in player, timeline bookmarks, and clip editor to find and snip the parts worth keeping.
 - **Share without changing the original.** Export H.264/AAC MP4 copies, choose the audio to include, and queue multiple exports in the background.
 - **Keep your library manageable.** Browse animated previews, search and filter captures, protect favorites from automatic cleanup, and manage your library with ease.
-- **Keep your private stuff private.** Trophy only records the games you approve. It only sees screens you share through your desktop's screen-sharing portal, and you can withdraw approval from the Games page at any time.
+- **Keep your private stuff private.** Capture uses the screens you share through your desktop's screen-sharing portal. Use **Revoke** on the Games page to forget Trophy's saved approval; it does not change desktop-wide portal permissions.
 - **Make it yours.** Customization options let you change the look, feel and colors of Trophy to match your style.
 
 ## Take a look around
 
 <p align="center">
-  <a href="docs/images/games-list.png"><img src="docs/images/games-list.png" alt="Trophy Games page listing approved games with a Ready status and a Withdraw action for each" width="48%" /></a>
+  <a href="docs/images/games-list.png"><img src="docs/images/games-list.png" alt="Trophy Games page with a collapsible Steam group, Ready to capture statuses, and a Revoke action for each approved game" width="48%" /></a>
   &nbsp;
   <a href="docs/images/settings.png"><img src="docs/images/settings.png" alt="Trophy Settings page listing sections for customization, video recording, background clips, audio recording, storage management, notifications, and game detection" width="48%" /></a>
 </p>
 
-<p align="center"><sub>Approve each detected game from the notification before Trophy can capture it, and withdraw that permission in your Games list.
+<p align="center"><sub>Finding a game does not authorize capture: approve it through the desktop portal, then manage Trophy's saved approval with Revoke in the Games list.
 Tune video, audio, clips, storage, appearance and more in Settings.</sub></p>
 
 <p align="center">
@@ -53,7 +53,7 @@ DMA-BUF capture avoids CPU pixel copies where the compositor, driver, and encode
 
 Recordings use MKV for crash-resilient recording; share exports create separate MP4 files. A clean dark interface, configurable accent colors, and a system tray keep the controls close without getting in the way.
 
-**A Wayland session is required.** Games running through XWayland can be captured; native X11 desktop sessions are not supported. **KDE Plasma (KWin) and GNOME (Mutter) are supported**, and both are verified for capture, global shortcuts, and game detection. Hyprland and Sway have window-monitor integrations but less live verification. All of this depends on **xdg-desktop-portal** plus your compositor's portal backend; see the [system requirements and package compatibility](https://gettrophy.app/docs/getting-started.html#requirements).
+**A Wayland session is required.** Games running through XWayland can be captured; native X11 desktop sessions are not supported. Detection and the Add Game process picker are compositor-independent, with no Trophy desktop scripts/extensions or compositor IPC. Capture and global shortcuts use **xdg-desktop-portal** plus your desktop's compatible portal backend; that dependency remains. Live validation of the rewritten detector does not establish complete recording compatibility on every desktop. See the [system requirements and package compatibility](https://gettrophy.app/docs/getting-started.html#requirements).
 
 ## Get Trophy
 
@@ -66,13 +66,13 @@ Recordings use MKV for crash-resilient recording; share exports create separate 
 
 CI also produces `.tar.xz`, `.deb` (amd64), and `.rpm` (x86_64) packages. Check the release assets for available downloads and see the [installation guide](https://gettrophy.app/docs/getting-started.html) and [packaging notes](https://gettrophy.app/docs/development.html#packaging-and-diagnostics) for details.
 
-Replace `<version>` with the downloaded version. The setup wizard walks you through storage, audio, and the desktop integration Trophy needs for game detection. Game capture requires your authorization through the system portal.
+Replace `<version>` with the downloaded version. The setup wizard walks you through storage, audio, and shortcuts. Game detection needs no compositor helper or injected graphics layer; capture requires your authorization through the system portal.
 
 The full documentation is on the website at **[gettrophy.app/docs](https://gettrophy.app/docs/)**: [Getting started](https://gettrophy.app/docs/getting-started.html) · [User guide](https://gettrophy.app/docs/user-guide.html) · [Build from source](https://gettrophy.app/docs/development.html)
 
 ## A few things to know
 
-- Game detection's Vulkan and OpenGL reporters are optional. **Anti-cheat compatibility is not guaranteed.** The OpenGL option uses session-wide preload configuration and requires a fresh login environment; [read the setup guidance](https://gettrophy.app/docs/getting-started.html#game-detection) before enabling it.
+- Game detection uses unprivileged Linux process information and local Steam, Heroic/Legendary and Lutris installation metadata, independently of the compositor. No injected graphics reporters or desktop extensions are required. See [launcher coverage and detection design](docs/game-detection.md).
 - Game audio falls back to the desktop mix when an application-specific source is unavailable. That mix can include other apps; [check your audio setup](https://gettrophy.app/docs/user-guide.html#audio).
 - MP4 export is whole-file and uses software encoding. Snip a clip first to share a shorter range. Size targets are approximate, and HDR-to-SDR conversion is not supported.
 

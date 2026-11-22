@@ -8,7 +8,139 @@ Use **Record** or your recording-toggle shortcut to start a full recording, then
 
 With DVR enabled and ready, the clip shortcut saves recent gameplay from the replay buffer. **During a full recording, that same shortcut creates a bookmark instead**, even if DVR is disabled. Replay length and recording quality are configurable in Settings.
 
+Saving a DVR clip keeps the current capture, encoder and audio running. The save
+may briefly wait for a keyframe and segment finalization. If preparing the clip
+fails, Trophy reports that save failure without stopping a healthy DVR buffer.
+
 Recordings use **MKV**. To create a broadly compatible MP4, use share export.
+
+### Games and library entries
+
+The **Games** tab prelists usable installed games from supported local launcher
+libraries, grouped by launcher. **Custom Games** contains manually added rules
+and saved games without current launcher metadata. **Default Exclusions** stays
+hidden unless you enable its toggle. Search filters all groups.
+Click a group heading to collapse or expand it. Counts still include its
+matching games while collapsed. Running games appear in **Now Playing** at the
+top without row action buttons. Within each other group, approved games come
+first, unapproved games next and denied games last.
+Installed Proton versions, Steam Linux Runtimes, anti-cheat runtimes and Steamworks
+redistributables appear under Default Exclusions, not their launcher's game list.
+They show **Excluded** and cannot be enabled as games from this table.
+The prerequisite installers `dxsetup` and `vc_redist`, and the Xalia support
+helper, use the same read-only Excluded state rather than offering rule controls.
+Browsers, chat apps, editors and other general desktop applications are no longer
+seeded as default exclusions. Old saved defaults are cleaned up when settings
+load; recorded custom rules and new Deny choices are retained.
+
+Status stays on each row: **Waiting for launch** (unapproved and not running),
+**Waiting for approval** (running without saved approval), **Ready to capture**,
+**Active** (running with saved approval), or **Denied**. Finding a game in a
+library never grants recording permission. Use **Prompt / Deny** to control
+automatic capture policy and **Revoke** to remove saved capture approval.
+Hover these controls for an explanation; clicking them also shows a brief
+in-app notice. Revoke forgets Trophy's saved approval, not desktop-wide permission.
+Only custom entries without saved approval have **Remove**; revoke approval first
+if needed. Launcher entries and internal helpers have no Remove control.
+Hover a game name for its identity details.
+
+If a game is missing, start it and use **Games → Add Game**. Launcher metadata
+remains local and read-only. Trophy does not launch games or modify launcher files.
+
+### Game library locations
+
+Open **Settings → Game Detection & Libraries → Game Libraries** to see Steam, Heroic, Legendary, Nile,
+Lutris and Faugus, including launchers marked **Not detected**. Detection refers to local
+metadata, not a running launcher. Each dropdown lists the usable installed games
+found for that launcher: use the arrow beside its game count to open the list.
+The table's status indicators distinguish detected, missing and invalid metadata.
+**Manage** opens each launcher's location settings; **Rescan now** refreshes
+the list in the background.
+Trophy also watches local metadata for changes, so completed installations can
+appear without a manual refresh. File-change bursts are combined over 250 ms;
+an independent 60-second check covers missed notifications. Starting an
+unfamiliar process does not trigger a library refresh. **Rescan now** and
+location changes request an immediate refresh. These checks never run overlapping library
+scans. The setup wizard keeps the previous game count and launcher icons visible
+while refreshing in the background, updating them only when results change.
+
+Automatic discovery checks standard XDG locations and common Steam, Heroic,
+Lutris and Faugus Flatpak locations. Use **Add location…** for a custom launcher metadata
+directory, not a game installation folder. The section explains which directory
+each launcher expects. You can add multiple locations, remove them, turn off
+**Use automatic locations** to replace the defaults, or **Reset to automatic**.
+For a custom Lutris location, the selected directory needs both `pga.db` and the
+`games/` YAML files.
+For Faugus, select the directory containing `games.json` (normally
+`~/.local/share/faugus-launcher`). Exact Windows game paths with their configured
+Wine prefix and explicit Linux-native executable entries are supported. Steam
+shortcuts, shared storefronts, script/batch launch tasks and generic launchers
+without installation evidence may still need an exact Trophy rule.
+
+All reads are local and read-only. An empty list does not necessarily mean you
+have no games: unsupported launch tasks or missing executable metadata cannot
+be used for automatic recognition. Missing external drives do not remove saved
+game rules.
+
+### Launcher and window handoffs
+
+Automatic full recording and DVR wait past a locally verified game-specific launcher until
+the actual game payload joins that same tracked instance. Trophy then waits for
+owned game audio before requesting capture, without an extra launcher-resume
+step. Audio present on the first check allows an immediate start; otherwise
+two consecutive successful polls settle it. Silent games start after ten
+resolved polls, normally about 20 seconds (slow audio queries can take longer).
+A launcher left open does not become the capture target just because it has
+been running longer.
+This process check does not prove window visibility: the portal still owns
+source selection and authorization. When owned game audio is not yet available,
+Trophy retains desktop-audio fallback and retries owned game audio.
+
+An orange dot and **Waiting for window** on the Dashboard indicate that automatic
+full recording is waiting for game startup or audio readiness before requesting
+capture. This is a startup status, not a guarantee that a particular window has
+been found. Use Stop to cancel the pending recording. Closing a launcher without
+starting the game clears the wait and returns Trophy to Idle when nothing else
+is selected.
+
+If a captured loader/splash window disappears while the **same game instance**
+remains alive and selected, Trophy retries capture using the saved portal
+approval for both full recording and DVR. It waits 1.5 seconds after cleanup
+before each attempt; there is no retry-count or total elapsed-time cutoff for
+recoverable window loss or an approved capture that returns no stream yet.
+The game can keep the same PID or hand off to another verified member of the
+same instance.
+
+For full recording, continuation is a **new recording file**, not an automatic merge.
+The gap between parts is not recorded. Intermediate handoff parts are saved
+quietly; completion notification and sound follow your settings when recording
+ends. If a suspected handoff turns out to be game exit, completion feedback is
+delivered after recovery is cancelled rather than suppressed permanently.
+DVR keeps its valid buffered footage and appends packets from the new capture. You can
+still save buffered footage while it waits; the window gap is not buffered video.
+In native-resolution mode, a replacement window is recorded at its own native
+size. Saving a clip across different resolutions takes longer: Trophy converts
+the video to the newest segment's resolution, preserving aspect ratio.
+This conversion requires the software H.264 encoder (libx264); compatible clips
+still save without re-encoding.
+Stop cancels pending recovery; game exit,
+changed selection, removed approval or blocked capture also prevents another
+attempt. A generic portal rejection, permission loss, startup timeout, or
+service/output failure is not treated as a temporarily absent window. Portal
+backends still control whether the replacement can be restored silently.
+
+If the desktop portal closes the entire sharing session without confirmed
+window-loss evidence, Trophy saves any recorded footage and stops capture rather
+than assuming sharing permission still applies. A confirmed window-loss handoff
+can still recover when a portal closure arrives at the same time. This is
+distinct from waiting past a known launcher before capture.
+If sharing ends as the game exits, DVR settles the tracked instance's exit
+before reporting a capture error. Confirmed game exit stops DVR quietly and
+leaves already-saved clips intact; real output/finalization failures still report.
+An explicit recording start after session closure uses fresh portal authorization,
+not the old closed grant. Cancellation or denial never starts an automatic retry.
+
+### Interrupted-file repair
 
 After an interrupted recording (for example, a crash), Trophy automatically
 rebuilds missing duration and seeking information in the background. This is
@@ -19,9 +151,11 @@ Recovery temporarily needs approximately one recording's worth of
 free disk space; if it cannot finish safely, the original is left unchanged.
 Content that never reached disk cannot be recovered.
 
+### Frame rate and capture info
+
 **Settings → Frame Rate** limits full recordings and DVR without limiting the game's FPS. Choose **∞ (Uncapped)** to keep every delivered frame instead. Uncapped capture can increase processing load; the actual rate depends on the game, compositor and encoder. Fixed limits skip excess frames without speeding up playback or changing audio timing. Capture Info can therefore show capture FPS above the selected limit while encode FPS stays near it; intentional rate limiting is not a queue-overflow drop.
 
-The compositor sends no frames at all while the screen is still — a loading screen, a menu, or a paused game. Trophy repeats the last frame at the target rate in that case, so recordings stay constant-rate and players never wait on a frame that covers many seconds. A repeated frame compresses to almost nothing. Recordings made before this change can still contain those long frames.
+Some capture backends deliver new frames only when the picture changes, so a loading screen, menu or paused game may stop producing frames. Trophy repeats the last frame at the target rate in that case, keeping the recording timeline moving. A repeated frame compresses to almost nothing. Recordings made before this change can still contain long-duration frames.
 
 The Dashboard shows source connection/mute status, audio levels, approximate replay-buffer fill, and warnings for sustained video-queue drops. Connected does not necessarily mean audible; check the meters and play back a short test recording after changing your setup.
 
@@ -31,10 +165,10 @@ While recording or DVR is active, click **ⓘ** beside the recording control for
 - Target and measured capture/encode FPS, target video bitrate, and measured audio/video output-payload bitrate (excluding container overhead). Both bitrate readouts show the active encoder configuration's VBR/CBR mode. In VBR the encoder's peak-rate ceiling is automatically one-third above the selected target (for example, 15 Mbps target → 20 Mbps peak), with a two-second rate-control buffer. Legacy saved maximum-bitrate values are ignored. Short measurement windows can still overshoot because of frame-size granularity and the rate-control buffer. CBR is unchanged. The **Encoder Preset** setting selects the NVENC p1–p7 preset or the x264 preset; VA-API encoders currently keep their driver default. Encode FPS counts inputs accepted by the codec, not packets emitted; codecs can delay output. The measurement interval is shown, and rates need an initial sample before appearing.
 - Current/peak frame-queue depth, frames skipped by the FPS cap, queue/encoder drops, GPU/CPU path counters, and session-average encoder-call time. Recent average, maximum and 95th percentile cover the last five seconds, capped at 1024 completed calls; old samples expire during a stall. **Skipped by FPS cap** counts frames the rate limiter deliberately discarded, so a gap between delivered frames and the frames in the file reads as intentional limiting rather than loss.
 - Encoded audio stream codec, sample rate, channels, separate/mixed layout and source connection status.
-- The Audio tab also refreshes per-source signal diagnostics at 100 ms: peak and RMS over approximately one second, five-second peak hold/full-scale warning, full-scale sample count since source binding, mute state and age of the last received audio buffer. Measurements use 100 ms buckets and post-mute source PCM before recording startup gating, mixing and encoding. Zero is **−∞ dBFS** (digital silence); **0 dBFS** is full scale. RMS averages sample power across channels, not LUFS. Full-scale samples warn of clipping risk, not proof of audible distortion or final mixed-track clipping; these are not true-peak or physical microphone-loudness measurements. Missing buffers show unavailable readings rather than fake silence. Replacing/restarting a source resets its history; DVR segment rotation alone does not. Voice included in the System mix has no separate signal measurements, and Mic retains its semantic identity.
-- Session duration and DVR coverage, retained segment count (including current footage and segments still finalizing), and retained video including the safety margin beyond the configured replay window.
+- The Audio tab also refreshes per-source signal diagnostics at 100 ms: peak and RMS over approximately one second, five-second peak hold/full-scale warning, full-scale sample count since source binding, mute state and age of the last received audio buffer. Measurements use 100 ms buckets and post-mute source PCM before recording startup gating, mixing and encoding. Zero is **−∞ dBFS** (digital silence); **0 dBFS** is full scale. RMS averages sample power across channels, not LUFS. Full-scale samples warn of clipping risk, not proof of audible distortion or final mixed-track clipping; these are not true-peak or physical microphone-loudness measurements. Missing buffers show unavailable readings rather than fake silence. Replacing/restarting a source resets its history; saving buffered footage does not. Voice included in the System mix has no separate signal measurements, and Mic retains its semantic identity.
+- Session duration and DVR coverage, retained segment count (cached groups of encoded pictures, including the current in-memory group), and retained video including the safety margin beyond the configured replay window.
 
-Video/session values refresh every second; source signal diagnostics refresh every 100 ms while the Audio tab is open. DVR counters cover the **current segment** and reset at rotation, not the whole replay buffer; DVR session duration and buffer coverage are separate. Source fields may be generic or unreported by the portal. Observed transport changes do not establish why a fallback happened. Encoder-call time is not end-to-end latency, and drop counters do not cover every compositor/PipeWire loss.
+Video/session values refresh every second; source signal diagnostics refresh every 100 ms while the Audio tab is open. Recording and DVR use the same capture/encoding engine. Caching encoded picture groups and saving clips do not restart that engine or reset its counters; a source handoff or producer rebuild starts a new session. DVR session duration and buffer coverage are separate. Source fields may be generic or unreported by the portal. Observed transport changes do not establish why a fallback happened. Encoder-call time is not end-to-end latency, and drop counters do not cover every compositor/PipeWire loss.
 
 ## Discord Rich Presence
 
@@ -49,6 +183,12 @@ Discord's activity privacy settings still apply, and Discord controls which acti
 ## Audio
 
 Choose **Game** or **Desktop** capture. Game mode supports separate or mixed tracks; Desktop mode mixes audio. Select your microphone and optional voice-chat application in Settings.
+
+The voice-application list updates automatically as PipeWire playback streams
+appear, disappear or change; no manual refresh is needed. Both the wizard and
+Audio Recording settings follow the same live metadata cache. If PipeWire restarts, stale
+entries clear and discovery reconnects in the background; your saved voice
+selection is retained.
 
 When game-specific audio is unavailable, Trophy deliberately falls back to the **desktop mix** rather than losing the game sound. The Dashboard calls this source **System** and hides the redundant Voice row. Separate voice capture resumes when game-specific capture binds, avoiding a second copy of voice chat already present in the desktop mix.
 

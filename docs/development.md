@@ -2,31 +2,90 @@
 
 [Back to README](../README.md) · [Packaging notes](../packaging/README.md)
 
-## Detection helper versions
+## Compositor-independent detection
 
-Each detector owns an independent positive integer revision, displayed in
-Settings → Detection Helpers as **Version 1**, **Version 2**, etc. Bump only the
-affected helper when changing it:
+Game detection and Add Game use the asynchronous Linux process census.
+No KWin scripts, GNOME Shell extensions or Hyprland/Sway IPC are built,
+installed or invoked. Window/screen selection and authorization belong to the
+standard ScreenCast portal, not Trophy-specific desktop integrations.
+Use `detection_probe --benchmark` to measure local census, launcher metadata and
+identification cost; it does not open a compositor connection.
 
-- KWin: `KPlugin.Version` in `resources/kwin/trophy-monitor/metadata.json`.
-- GNOME: `version` in `resources/gnome/metadata.json`.
-- Vulkan/OpenGL: the `TROPHY_HELPER_VERSION` data marker in each detector's own
-  `src/vulkan_layer/trophy_layer.cpp` / `src/gl_shim/trophy_gl_shim.c` source.
+The Add Game list is a process picker, not a visible-window census. There is
+no universally available cross-desktop Wayland API that gives Trophy a
+reliable pre-authorization window-to-PID list. Desktop-entry, environment and
+audio hints may help rank likely applications, but must not be represented
+as proof that a process owns a visible window. See the
+[detection architecture](game-detection.md).
 
-These revisions are separate from the application version and do not change the
-frozen detection socket protocol. Settings reads installed script metadata and
-enrolled reporter files (or available reporters before enrollment), without
-loading the reporters. Unversioned/invalid files show **Version unknown** rather
-than inheriting the current app's revision. This identifies files, not a running
-game's mapped library or the code currently loaded by the compositor/login.
-Hyprland/Sway use compositor tools, so no Trophy script version is claimed.
+Add Game defaults to **Likely applications**: known game primaries, Windows
+payloads and executable matches from cached desktop application launchers.
+**Show all processes** restores the other selectable process rows. Desktop
+metadata is refreshed on the census worker alongside installed-game metadata;
+opening/filtering the picker performs no new filesystem enumeration.
+
+## Recording engine and output policies
+
+`Application` shares one `RecordingEngine` between full recording and DVR.
+The engine directly owns capture, encoders, recording audio and sessions.
+`RecordingEngineCapture.cpp` contains its native implementation, not a separate
+capture manager or pipeline object. `RecordingManager` contains its private
+file writer; `ReplayManager` contains its private packet buffer and export jobs.
+Neither manager receives native pipeline handles. Their boundary consists of
+immutable encoded packets, stream descriptions, generation/timeline IDs and
+pinned identity metadata.
+Manager unit tests cover consumer policy and completion feedback; engine tests
+cover producer demand and lifecycle. Private-service integration tests inspect
+the shared engine rather than injecting capture resources into either manager.
+
+Consumer attachment supplies demand. Compatible attachments reuse the approved
+live input and encoder; releasing the last consumer drains and stops the
+producer. Mode switches attach the successor before releasing the previous
+consumer. An individual output failure closes only that output while surviving
+consumers continue receiving the same stream.
+Capture, encoding, recording-audio and permission/recovery changes therefore
+apply to both full recording and DVR. File writing/completion and replay
+retention/export remain separate consumer policies and need their own tests;
+shared producer ownership is not a guarantee against mode-specific regressions.
+
+`CaptureLifecycle` supplies instance-bound recovery, attempt-scoped source/token
+events and shared authorization fences. Recovery and pipeline reconfiguration
+belong to the engine, not either output. Full recording files completed native
+generations as separate parts; DVR retains generations across verified handoffs.
+Header-only generations are not usable replay inputs.
+
+The DVR caches closed GOP packet blocks and holds the current GOP in memory.
+Clip saves take an immutable request-time snapshot, reserving cached files and
+copying the open GOP's packet references. Saving neither rotates nor recreates
+the running encoder, capture or audio session. Snapshots remain valid through
+pruning, consumer switches and buffer destruction. Export failure does not stop
+buffering; real buffer-write or finalization failures close that consumer.
+Snapshots retain the producer's video decode timestamps alongside cached GOPs;
+export maps them through the actual container clock, including audio-induced
+timestamp shifts. It does not infer decode order from presentation timestamps.
+
+Closure completion uses the pinned instance's liveness independently of restore
+permission. DVR drains native work immediately, then allows a bounded exit grace
+for a still-running member or awaits the authoritative census across a verified
+launch-context gap. Confirmed exit is quiet; a live/unclassified closure remains
+terminal and fenced. Output failures take precedence over exit classification,
+and explicit Stop cancels only delayed capture-closure feedback, not output errors.
+
+Native resolution is chosen from each new capture, not a previous loader.
+In-place size changes within the same capture keep that generation's encoded
+canvas; persisting a GOP or saving a clip does not create a new generation.
+`ReplayExporter` stream-copies compatible clips; clips spanning incompatible
+video formats normalize video to the newest segment's canvas on the export
+worker, preserving aspect ratio and copying audio. This fallback requires
+libx264, uses single-threaded codecs, and never modifies the buffered originals.
 
 ## Dependencies
 
 - CMake 3.21+, a C++20 compiler, and pkg-config.
 - Qt 6 development packages: Core, Gui, Qml, Quick, QuickControls2, Multimedia, DBus, Concurrent, Network, and Widgets.
 - FFmpeg development libraries: libavcodec, libavformat, libavutil, libswscale, and libswresample.
-- PipeWire development libraries and Vulkan loader/headers.
+- PipeWire development libraries.
+- libyaml and SQLite development libraries (read-only local launcher metadata).
 - Optional libva/libva-drm for VA-API, libdrm and EGL for DMA-BUF support, and GBM for related tests.
 - GoogleTest and Qt Test when building tests (enabled by default).
 
@@ -47,7 +106,7 @@ Arch/CachyOS:
 
 ```bash
 sudo pacman -S --needed base-devel cmake qt6-base qt6-declarative qt6-multimedia \
-    ffmpeg pipewire libva pkgconf vulkan-headers vulkan-icd-loader \
+    ffmpeg pipewire libva pkgconf libyaml sqlite \
     libdrm mesa gtest
 ```
 
@@ -55,8 +114,8 @@ Fedora (FFmpeg development package availability depends on enabled repositories)
 
 ```bash
 sudo dnf install gcc-c++ make cmake qt6-qtbase-devel qt6-qtdeclarative-devel \
-    qt6-qtmultimedia-devel ffmpeg-devel pipewire-devel libva-devel \
-    vulkan-headers vulkan-loader-devel libdrm-devel mesa-libEGL-devel \
+    qt6-qtmultimedia-devel ffmpeg-devel pipewire-devel libva-devel libyaml-devel sqlite-devel \
+    libdrm-devel mesa-libEGL-devel \
     mesa-libgbm-devel gtest-devel
 ```
 
@@ -65,8 +124,8 @@ Ubuntu/Debian:
 ```bash
 sudo apt install build-essential cmake pkg-config qt6-base-dev qt6-declarative-dev \
     qt6-multimedia-dev libavcodec-dev libavformat-dev libavutil-dev \
-    libswscale-dev libswresample-dev libpipewire-0.3-dev libva-dev \
-    libvulkan-dev libgtest-dev libdrm-dev libegl-dev libgbm-dev
+    libswscale-dev libswresample-dev libpipewire-0.3-dev libva-dev libyaml-dev libsqlite3-dev \
+    libgtest-dev libdrm-dev libegl-dev libgbm-dev
 ```
 
 ## Build and install
@@ -85,7 +144,7 @@ For read-only source snapshots (for example container package builds), configure
 with `-DQT_QML_GENERATE_QMLLS_INI=OFF` to disable source-tree IDE metadata writes.
 Normal developer builds keep generation enabled by default.
 
-The install includes `libTrophy.so`, reporter libraries, and desktop integration as well as the executable. **Do not copy only the binary.** Ensure `~/.local/bin` is on `PATH` for native CLI shortcuts. Reconfigure after changing branches/commits if you need the displayed configure-time version stamp refreshed.
+The install includes `libTrophy.so` and desktop integration as well as the executable. **Do not copy only the binary.** Ensure `~/.local/bin` is on `PATH` for native CLI shortcuts. Reconfigure after changing branches/commits if you need the displayed configure-time version stamp refreshed.
 
 Desktop and autostart entries use the reverse-DNS id
 `io.github.stevenjwheeler.Trophy.desktop`. Do not rename them back to
@@ -117,9 +176,27 @@ HOME="$test_root/home" \
     ctest --test-dir ../trophy-build --output-on-failure --timeout 300
 ```
 
-**Quit running Trophy instances before socket tests.** The reporter protocol uses the fixed `/tmp/trophy-detection.sock`; HOME/XDG isolation does not relocate it. Certain integration tests launch their own private D-Bus or PipeWire environment. Hardware and optional-codec tests skip when requirements are unavailable. Passing automated tests does not establish compatibility with every compositor, GPU, or game runtime.
+Integration tests launch private D-Bus or PipeWire environments. Hardware and optional-codec tests skip when requirements are unavailable. Passing automated tests does not establish compatibility with every compositor, GPU, or game runtime. Process tests do not use a fixed reporter socket.
 
-For AppImage payload/startup smoke checks and reporter ABI inspection, see [packaging notes](../packaging/README.md). Those checks have narrower scope than live recording tests.
+Isolated configuration and services do **not** isolate the physical GPU or its
+memory. Do not run GPU encoder/import tests or export tests that probe hardware
+while someone is gaming or validating live capture. Select software-only and
+private-service groups instead, with at most two reduced-priority workers;
+exclude GPU-capable groups and set `CUDA_VISIBLE_DEVICES=-1` in test children
+as an additional safeguard, not a substitute for selecting safe tests. Run the
+hardware groups separately when the GPU is available, and record exclusions.
+
+`test_RecordingEngine` uses fake capture, encoding and packet outputs, gated
+audio-lookup workers, and owned helper processes. It covers process-instance
+fences, launcher/census handoffs, manual-source naming, startup audio layouts,
+stale completions and explicit portal reselection without using desktop services
+or the GPU. Run it with the isolated environment above and
+`ctest -R 'RecordingEngineTest|Engine(Naming|AudioIdentity|Startup|Routing|Census|IdentityFence|StaleCallback|PortalFence)Test'`.
+Routing-layout tests exercise the same planner used by native startup; they do
+not establish PCM delivery. Keep the private-service recording/audio regressions
+for real media and consumer-specific recording/DVR completion behavior.
+
+For AppImage payload/startup smoke checks, see [packaging notes](../packaging/README.md). Those checks have narrower scope than live recording tests.
 
 Package harness regressions can run independently without a build or desktop:
 
@@ -167,8 +244,8 @@ ctest --test-dir ../trophy-build --output-on-failure --timeout 120 \
 - Automatic recordings and DVR pin the detected game's identity at capture
   start. When the portal reports PID 0, audio setup and session retries retain
   that pinned game PID, rather than relying on a display title that may not
-  match an engine-named stream (for example, `Wwise`). A nonzero capture-source
-  PID takes precedence. Manual capture never borrows the current detected
+  match an engine-named stream (for example, `Wwise`). The pinned game instance
+  takes precedence over capture-source metadata. Manual capture never borrows the current detected
   game's PID/title, and later detections cannot retarget an existing capture.
 - Application audio uses a private PipeWire daemon, WirePlumber's policy-only
   profile and a null sink. Tests remove/recreate playback sources and stop/restart
@@ -178,20 +255,23 @@ ctest --test-dir ../trophy-build --output-on-failure --timeout 120 \
 - Native audio needs Python, `pipewire`, `wireplumber` 0.5+, `pw-cli`, `pw-dump`
   and `dbus-run-session`; it skips explicitly when these are unavailable. Use
   CTest/the provided launchers, not private-test environment markers on your
-  normal session bus. These suites alone do not use the reporter socket.
+  normal session bus. There is no graphics-reporter socket in the rewritten detector.
 - `RecordingFailureTest` runs synthetic SHM video and a tone through the real
   private PipeWire graph, fake portal, recording/DVR managers and software
   H.264/AAC/MKV pipeline. Merged/separate cases cover portal closure, portal
-  service exit and PipeWire daemon exit during recording, startup and DVR
-  handoff. Tests decode retained recordings and recovered recordings/clips,
+  service exit and PipeWire daemon exit during recording, startup and live DVR
+  buffering. Tests decode retained recordings and recovered recordings/clips,
   check stream timestamps, video dimensions and non-silent decoded PCM, and verify cleanup,
   no false save signal, stale-reply rejection and saved-token preservation.
+  Window-handoff groups replace the real capture node after encoded frames,
+  decode both saved parts, and check retained full-recording intent, repeated
+  approved empty captures, explicit stop and terminal approval rejection.
   Additional recording/DVR groups renegotiate native SHM video dimensions/FPS
   (including odd sizes and restoration), recreate audio playback at 44.1/96/48kHz
   and mono/stereo, and check decoded colors, aspect padding, replacement tones
   and resumed audio timing. Audio recreation tests normal source rebinding,
   not in-place renegotiation of an application's fixed client format. DVR tests
-  rotate across changes and decode the combined clip, rejecting decoder errors
+  retain the producer across in-place changes and decode the combined clip, rejecting decoder errors
   as well as invalid API results.
   Permission cases close the fake portal grant, reject a saved token at
   SelectSources/Start, cancel an explicit authorization attempt, and revoke
@@ -229,36 +309,11 @@ pipeline. Real portal UI/permission-store behavior, GPU/DMA-BUF driver resets,
 additional native scheduling/format combinations and suspend/resume still need
 separate integration and hardware/session checks.
 
-### Reporter runtime automation
+### Process detection
 
-`packaging/check_reporter_runtimes.py` records a host/explicit-sysroot ABI matrix.
-It checks both reporter and probe dependency closures before opt-in execution:
-
-```bash
-python3 packaging/check_reporter_runtimes.py \
-    /path/to/libtrophy_layer.so /path/to/libtrophy_gl_shim.so \
-    --runtime example=/path/to/materialized/sysroot \
-    --execute-trusted-fixtures --output /tmp/opencode/reporter-runtimes.json
-```
-
-Use only trusted reporter build outputs with the execution flag. The probes
-disable reporting, load/resolve/unload the library without graphics calls, and
-verify loaded objects against the checked provider paths. They never launch
-Steam, pressure-vessel, a game or a driver. Matching multilib compiler support is
-required for ELF32 probes; missing/incompatible providers prevent execution.
-Compatibility negatives are recorded in JSON, not treated as blanket game
-failures. Check per-runtime/per-reporter statuses, not just the tool's exit code.
-The standalone reporter CI jobs use `--require-host-pass` to require their
-matching host ABI and disabled-loader fixtures to pass and upload the matrix.
-This workflow wiring is not evidence of a remote CI execution.
-
-`packaging/materialize_reporter_runtime.py RUNTIME NEW_SCRATCH_DIRECTORY` can
-extract a bounded core-provider subset from an installed Steam content store.
-It checks mtree sizes/SHA256s and copies to a new directory without modifying
-Steam. Missing content stays missing; it never substitutes host libraries.
-This is not a full reconstructed runtime: absent graphics/other dependencies
-can still prevent closure checks. Partial stores and metadata alone do not
-establish runtime compatibility or actual Steam provider selection.
+See the [detection design and limitations](game-detection.md). `detection_probe`
+is a read-only developer executable that prints current game/process/audio
+snapshots without opening a compositor connection or starting recording.
 
 ### Diagnostic kit
 
@@ -276,7 +331,3 @@ collector, the kit, and how to read its report.
 Issues, focused pull requests, and documentation improvements are welcome. For fixes, include reproduction steps and a regression test where practical. Describe what you verified, and distinguish automated coverage from live desktop/game testing.
 
 The application uses Qt Quick/QML for the interface and C++20 for recording, audio, detection, and library services. Video capture stays PipeWire/portal-based; share export uses native FFmpeg libraries. Preserve user authorization, worker/input lifetimes, and the distinction between disposable caches and durable annotations when changing these paths.
-
-For Qt-free native/i386 reporter builds and their daemon-free fixture suites,
-see [standalone reporters](../reporters/README.md). These do not automatically
-enroll 32-bit helpers in the installed application's existing reporter settings.

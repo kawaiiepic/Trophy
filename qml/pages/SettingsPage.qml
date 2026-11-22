@@ -17,13 +17,12 @@ Page {
     // Explicit dependencies; defaults preserve engine/creation-context hosts.
     property var preferences: typeof settingsManager !== "undefined" ? settingsManager : null // qmllint disable unqualified
     property var audioDevices: typeof audioDeviceEnumerator !== "undefined" ? audioDeviceEnumerator : null // qmllint disable unqualified
+    property var libraryDetector: typeof gameDetector !== "undefined" ? gameDetector : null // qmllint disable unqualified
 
-    // Refresh live choices on open; the voice picker retains the saved app
-    // independently because apps publish audio streams on demand.
+    // Voice choices update from the shared audio registry automatically.
     onVisibleChanged: {
         if (!visible)
             return
-        if (audioDeviceEnumerator) audioDeviceEnumerator.refreshAudioApps()
         // Another AppImage manager may have listed Trophy since launch: settle
         // the menu-entry visibility when the page is opened.
         if (typeof desktopIntegration !== "undefined" && desktopIntegration)
@@ -65,10 +64,10 @@ Page {
             card = notificationsCard;
         else if (sectionTitle === "Discord Rich Presence")
             card = discordCard;
-        else if (sectionTitle === "Game Detection")
+        else if (sectionTitle === "Game Detection & Libraries" || sectionTitle === "Game Detection")
             card = detectionCard;
-        else if (sectionTitle === "Detection Helpers")
-            card = detectionHelpersCard;
+        else if (sectionTitle === "Game Libraries")
+            card = detectionCard;
         else if (sectionTitle === "System Tray")
             card = trayCard;
         else if (sectionTitle === "Keyboard Shortcuts")
@@ -248,15 +247,17 @@ Page {
 
             ScrollBar.vertical: TrophyScrollBar {}
 
-            ColumnLayout {
+            GridLayout {
                 id: contentCol
+                columns: 1
                 width: Math.min(parent.width - 12, 800)
                 anchors.horizontalCenter: parent.horizontalCenter
-                spacing: Theme.spacingLarge
+                rowSpacing: Theme.spacingLarge
 
                 // ================= CUSTOMIZATION =================
                 SectionCard {
                     id: customizationCard
+                    Layout.row: 9
                     sectionTitle: qsTr("Customization")
                     iconSource: "qrc:/icons/paintbrush.svg"
                     description: qsTr("Choose a theme and accent color. Changes apply immediately.")
@@ -293,6 +294,7 @@ Page {
                 // ================= VIDEO =================
                 SectionCard {
                     id: videoCard
+                    Layout.row: 0
                     sectionTitle: qsTr("Video Recording")
                     iconSource: "qrc:/icons/video.svg"
                     description: qsTr("Encoder, quality and output format. Changes apply to the next recording.")
@@ -609,6 +611,7 @@ Page {
                 // ================= BACKGROUND CLIPS =================
                 SectionCard {
                     id: clipsCard
+                    Layout.row: 2
                     sectionTitle: qsTr("Background Clips")
                     iconSource: "qrc:/icons/scissors.svg"
                     description: qsTr("Quiet background buffering for instant clips. Changes take effect within a minute.")
@@ -699,6 +702,7 @@ Page {
                 // ================= AUDIO =================
                 SectionCard {
                     id: audioCard
+                    Layout.row: 1
                     sectionTitle: qsTr("Audio Recording")
                     iconSource: "qrc:/icons/audio-recording.svg"
                     description: qsTr("What gets heard in your recordings, and how tracks are stored.")
@@ -847,29 +851,19 @@ Page {
 
                     SettingRow {
                         label: qsTr("Voice Chat App")
-                        help: qsTr("Select from running audio applications.")
+                        help: qsTr("Select from audio applications. The list updates automatically.")
                         visible: settingsManager ? settingsManager.audioMode === "game" : true
 
-                        RowLayout {
-                            spacing: Theme.spacingSmall
-
-                            TrophyButton {
-                                text: qsTr("Refresh")
-                                enabled: audioDeviceEnumerator
-                                onClicked: if (audioDeviceEnumerator) audioDeviceEnumerator.refreshAudioApps()
+                        VoiceAppComboBox {
+                            id: voiceChatAppBox
+                            objectName: "settingsVoiceAppPicker"
+                            Layout.preferredWidth: 300
+                            // Live-applied to the running pipeline; no lock needed.
+                            apps: audioDeviceEnumerator ? audioDeviceEnumerator.audioApps : []
+                            savedApp: settingsManager ? settingsManager.voiceChatApp : ""
+                            onAppSelected: function(binary) {
+                                if (settingsManager) settingsManager.voiceChatApp = binary;
                             }
-
-                            VoiceAppComboBox {
-                                id: voiceChatAppBox
-                                Layout.preferredWidth: 300
-                                // Live-applied to the running pipeline; no lock needed.
-                                apps: audioDeviceEnumerator ? audioDeviceEnumerator.audioApps : []
-                                savedApp: settingsManager ? settingsManager.voiceChatApp : ""
-                                onAppSelected: function(binary) {
-                                    if (settingsManager) settingsManager.voiceChatApp = binary;
-                                }
-                            }
-
                         }
                     }
 
@@ -878,6 +872,7 @@ Page {
                 // ================= STORAGE =================
                 SectionCard {
                     id: storageCard
+                    Layout.row: 5
                     sectionTitle: qsTr("Storage Management")
                     iconSource: "qrc:/icons/storage.svg"
                     description: qsTr("Where recordings live and what happens when space runs out.")
@@ -1022,6 +1017,7 @@ Page {
                 // ================= NOTIFICATIONS =================
                 SectionCard {
                     id: notificationsCard
+                    Layout.row: 7
                     sectionTitle: qsTr("Notifications")
                     iconSource: "qrc:/icons/bell.svg"
                     description: qsTr("Which popups Trophy may show. Errors, the capture-authorize prompt and direct keypress feedback always show.")
@@ -1114,6 +1110,7 @@ Page {
                 // ================= DISCORD =================
                 SectionCard {
                     id: discordCard
+                    Layout.row: 8
                     sectionTitle: qsTr("Discord Rich Presence")
                     iconSource: "qrc:/icons/social.svg"
                     description: qsTr("Share your recording status on Discord.")
@@ -1167,7 +1164,9 @@ Page {
                 // ================= DETECTION =================
                 SectionCard {
                     id: detectionCard
-                    sectionTitle: qsTr("Game Detection")
+                    objectName: "gameDetectionCard"
+                    Layout.row: 3
+                    sectionTitle: qsTr("Game Detection & Libraries")
                     iconSource: "qrc:/icons/gamepad.svg"
                     description: qsTr("Choose whether Trophy detects games and records sessions automatically.")
 
@@ -1198,147 +1197,60 @@ Page {
                             }
                         }
                     }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: 1
+                        color: Theme.borderColor
+                    }
+
+                    ColumnLayout {
+                        objectName: "gameLibrariesSection"
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingMedium
+
+                        RowLayout {
+                            spacing: Theme.spacingSmall
+                            TrophyIcon {
+                                source: "qrc:/icons/folder.svg"
+                                color: Theme.textSecondaryColor
+                            }
+                            Label {
+                                text: qsTr("Game Libraries")
+                                font.pixelSize: Theme.fontSizeNormal
+                                font.weight: Font.Medium
+                                color: Theme.textColor
+                            }
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Trophy uses local launcher metadata to recognize running games and show their names. Standard native and supported Flatpak locations are checked automatically; use Manage to add custom metadata folders. File changes trigger a refresh, with a 30-second fallback check.")
+                            wrapMode: Text.WordWrap
+                            color: Theme.textSecondaryColor
+                        }
+                        GameLibrariesTable {
+                            Layout.fillWidth: true
+                            detector: root.libraryDetector
+                            onAddLocationRequested: function(launcherId) {
+                                libraryFolderDialog.launcherId = launcherId
+                                libraryFolderDialog.open()
+                            }
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("If a game is not recognized or does not use a supported launcher, start the game, then use Add Game in the Games tab to add it manually.\n\nDetected means local metadata was found, not that the launcher is running. An empty game list can mean no supported launch tasks were found. Trophy does not launch games or modify these files, and listing a game here does not authorize recording.")
+                            wrapMode: Text.WordWrap
+                            color: Theme.textSecondaryColor
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+                    }
                 }
 
-                SectionCard {
-                    id: detectionHelpersCard
-                    objectName: "detectionHelpersCard"
-                    sectionTitle: qsTr("Detection Helpers")
-                    iconSource: "qrc:/icons/puzzle.svg"
-                    description: qsTr("Integration status at a glance. Graphics helpers are optional.")
-                    readonly property real statusWidth: Math.max(vulkanControls.badgeWidth, glControls.badgeWidth)
-                    readonly property real actionWidth: Math.max(vulkanHelperSwitch.implicitWidth, glHelperSwitch.implicitWidth)
-
-                    SettingRow {
-                        label: qsTr("Game Window Helper (required)")
-                        help: qsTr("Provides window identity, focus and fullscreen state for game detection, the window picker and capture restoration.%1 Screen capture still requires separate authorization.")
-                              .arg(windowMonitor && windowMonitor.compositorName === "kwin"
-                                   ? qsTr(" On KDE this uses a read-only KWin script.")
-                                   : (windowMonitor && windowMonitor.compositorName === "gnome"
-                                      ? qsTr(" On GNOME this uses the Trophy Window Helper Shell extension. Logout/login may be required after installation.") : ""))
-
-                        showVersions: windowMonitor && (windowMonitor.compositorName === "kwin" || windowMonitor.compositorName === "gnome")
-                        bundledVersion: windowMonitor ? windowMonitor.bundledHelperVersion : 0
-                        installedVersion: windowMonitor ? windowMonitor.helperVersion : 0
-                        helperInstalled: windowMonitor && ((windowMonitor.compositorName === "kwin" && windowMonitor.kwinScriptInstalled)
-                                         || (windowMonitor.compositorName === "gnome" && windowMonitor.gnomeHelperInstalled))
-
-                        HelperControls {
-                            id: windowHelperControls
-                            objectName: "gameWindowHelperStatus"
-                            statusWidth: badgeWidth
-                            actionWidth: helperRepair.implicitWidth
-                            showAction: windowMonitor && !windowMonitor.trackingReady
-                            healthy: windowMonitor && windowMonitor.trackingReady
-                            attention: !healthy && !(windowMonitor && windowMonitor.trackingChecking)
-                            text: windowMonitor && windowMonitor.trackingReady
-                                  ? (windowMonitor.compositorName === "kwin" ? qsTr("Installed · Working") : qsTr("Working"))
-                                  : (windowMonitor && windowMonitor.trackingChecking ? qsTr("Checking…")
-                                     : (windowMonitor && windowMonitor.compositorName === "kwin"
-                                         ? (windowMonitor.kwinScriptInstalled
-                                            ? (windowMonitor.kwinScriptEnabled ? qsTr("Installed · Not reporting") : qsTr("Installed · Disabled"))
-                                            : qsTr("Not installed"))
-                                        : (windowMonitor && windowMonitor.compositorName === "gnome"
-                                           ? (windowMonitor.gnomeHelperInstalled ? qsTr("Installed · Awaiting login") : qsTr("Not installed"))
-                                           : qsTr("Unavailable"))))
-                            TrophyButton {
-                                id: helperRepair
-                                anchors.right: parent.right
-                                visible: windowHelperControls.showAction
-                                text: qsTr("Repair")
-                                enabled: windowMonitor && !windowMonitor.trackingChecking
-                                onClicked: if (windowMonitor) windowMonitor.repairTracking()
-                            }
-                        }
-                    }
-
-                    Label {
-                        visible: windowMonitor && windowMonitor.compositorName === "gnome" && !windowMonitor.trackingReady
-                        text: windowMonitor ? windowMonitor.gnomeHelperStatus : ""
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.textSecondaryColor
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
-
-                    SettingRow {
-                        label: qsTr("Vulkan Detection")
-                        help: qsTr("Notices games starting Vulkan graphics and notifies Trophy to start recording, including Proton titles.")
-                        showVersions: app !== null
-                        bundledVersion: app ? app.vulkanBundledHelperVersion : 0
-                        installedVersion: app ? app.vulkanHelperVersion : 0
-                        helperInstalled: app && app.vulkanLayerRegistered
-
-                        HelperControls {
-                            id: vulkanControls
-                            objectName: "vulkanHelperStatus"
-                            statusWidth: detectionHelpersCard.statusWidth
-                            actionWidth: detectionHelpersCard.actionWidth
-                            healthy: app && app.vulkanLayerRegistered
-                            text: healthy ? qsTr("Enrolled") : qsTr("Not enrolled")
-
-                            TrophySwitch {
-                                id: vulkanHelperSwitch
-                                anchors.right: parent.right
-                                checked: settingsManager ? settingsManager.vulkanLayerEnabled : false
-                                onToggled: {
-                                    if (settingsManager)
-                                        settingsManager.vulkanLayerEnabled = checked;
-                                    if (app)
-                                        app.setVulkanLayerEnabled(checked);
-                                }
-                            }
-                        }
-                    }
-
-                    SettingRow {
-                        label: qsTr("OpenGL Detection")
-                        helpTextFormat: Text.StyledText
-                        help: (app && app.glShimAvailable)
-                              ? qsTr("Notices games starting OpenGL graphics and notifies Trophy to start recording. Loads into any OpenGL app and %1. Changes require logging out and back in.")
-                                .arg(app.glShimEnrolled
-                                     ? '<font color="' + Theme.cautionColor + '">' + qsTr("may cause issues with anti-cheat games") + '</font>'
-                                     : qsTr("may cause issues with anti-cheat games"))
-                              : qsTr("OpenGL detection helper not found in this install.")
-                        rowEnabled: app ? app.glShimAvailable : false
-                        showVersions: app && app.glShimAvailable
-                        bundledVersion: app ? app.glBundledHelperVersion : 0
-                        installedVersion: app ? app.glHelperVersion : 0
-                        helperInstalled: app && app.glShimEnrolled
-
-                        HelperControls {
-                            id: glControls
-                            objectName: "glHelperStatus"
-                            statusWidth: detectionHelpersCard.statusWidth
-                            actionWidth: detectionHelpersCard.actionWidth
-                            attention: !app || !app.glShimAvailable
-                            enrolled: app && app.glShimEnrolled
-                            text: attention ? qsTr("Unavailable") : (app.glShimEnrolled ? qsTr("Enrolled") : qsTr("Not enrolled"))
-
-                            TrophySwitch {
-                                id: glHelperSwitch
-                                anchors.right: parent.right
-                                checked: app ? app.glShimEnrolled : false
-                                onToggled: {
-                                    if (app)
-                                        app.setGlShimEnrolled(checked);
-                                }
-                            }
-                        }
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: qsTr("Installed versions may not be active until the game, compositor or login session restarts.")
-                        color: Theme.textMutedColor
-                        font.pixelSize: Theme.fontSizeSmall
-                        wrapMode: Text.WordWrap
-                    }
-                }
 
                 // ================= TRAY =================
                 SectionCard {
                     id: trayCard
+                    Layout.row: 6
                     sectionTitle: qsTr("System Tray")
                     iconSource: "qrc:/icons/tray.svg"
                     description: (app && !app.trayAvailable && app.runWithoutTraySupported)
@@ -1400,6 +1312,7 @@ Page {
                 // ================= SHORTCUTS =================
                 SectionCard {
                     id: shortcutsCard
+                    Layout.row: 4
                     sectionTitle: qsTr("Keyboard Shortcuts")
                     iconSource: "qrc:/icons/keyboard.svg"
                     description: qsTr("System-wide keys that work even while you're in-game.")
@@ -1459,6 +1372,7 @@ Page {
                 // ================= DESKTOP INTEGRATION =================
                 SectionCard {
                     id: desktopIntegrationCard
+                    Layout.row: 10
                     objectName: "desktopIntegrationCard"
                     visible: typeof desktopIntegration !== "undefined" && desktopIntegration && desktopIntegration.isAppImage
                     sectionTitle: qsTr("Desktop Integration")
@@ -1582,6 +1496,7 @@ Page {
 
                 // --- FOOTER ACTIONS ---
                 RowLayout {
+                    Layout.row: 11
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.spacingSmall
                     spacing: Theme.spacingMedium
@@ -1605,6 +1520,7 @@ Page {
                 }
 
                 Item {
+                    Layout.row: 12
                     Layout.preferredHeight: Theme.spacingMedium
                 }
             }
@@ -1685,6 +1601,14 @@ Page {
     }
 
     // ============ REUSABLE CONTROLS (visual only, no logic changes) ============
+
+    FolderDialog {
+        id: libraryFolderDialog
+        property string launcherId: ""
+        title: qsTr("Select launcher metadata directory")
+        options: typeof app !== "undefined" && app && !app.useNativeDialogs ? FolderDialog.DontUseNativeDialog : 0
+        onAccepted: if (root.libraryDetector) root.libraryDetector.addLibraryLocation(launcherId, selectedFolder)
+    }
 
     component SectionCard: SettingsSectionCard {}
 
